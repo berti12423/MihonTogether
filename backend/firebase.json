@@ -1,0 +1,30 @@
+{
+  "functions": [{ "source": ".", "codebase": "social", "runtime": "nodejs22", "ignore": ["node_modules", ".git", "test", "scripts", "hosting", "*-debug.log", ".cache", ".env.local", "production.json", "package-lock.json"], "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"] }],
+  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
+  "database": { "rules": "database.rules.json" },
+  "storage": { "rules": "storage.rules" },
+  "hosting": {
+    "public": "hosting",
+    "ignore": ["**/*.map"],
+    "cleanUrls": true,
+    "rewrites": [{ "source": "**", "destination": "/index.html" }],
+    "headers": [{
+      "source": "**",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data: https:; connect-src 'self' https://graphql.anilist.co https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.cloudfunctions.net https://*.firebaseapp.com http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; frame-src https://*.firebaseapp.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Cache-Control", "value": "no-cache" }
+      ]
+    }]
+  },
+  "emulators": {
+    "auth": { "host": "127.0.0.1", "port": 9099 },
+    "firestore": { "host": "127.0.0.1", "port": 8080 },
+    "database": { "host": "127.0.0.1", "port": 9000 },
+    "functions": { "host": "127.0.0.1", "port": 5001 },
+    "storage": { "host": "127.0.0.1", "port": 9199 },
+    "hosting": { "host": "127.0.0.1", "port": 5050 },
+    "ui": { "enabled": false }, "singleProjectMode": true
+  }
+}

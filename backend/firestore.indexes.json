@@ -1,0 +1,23 @@
+{
+  "indexes": [
+    { "collectionGroup": "friendRequests", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "recipientUid", "order": "ASCENDING" }, { "fieldPath": "state", "order": "ASCENDING" } ] },
+    { "collectionGroup": "friendRequests", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "senderUid", "order": "ASCENDING" }, { "fieldPath": "state", "order": "ASCENDING" } ] },
+    { "collectionGroup": "items", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "state", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "items", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "generation", "order": "ASCENDING" }, { "fieldPath": "expiresAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "entries", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "generation", "order": "ASCENDING" }, { "fieldPath": "content.title", "order": "ASCENDING" } ] },
+    { "collectionGroup": "entries", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "generation", "order": "ASCENDING" }, { "fieldPath": "progress.read", "order": "ASCENDING" } ] },
+    { "collectionGroup": "rooms", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "state", "order": "ASCENDING" }, { "fieldPath": "leaseExpiresAt", "order": "ASCENDING" } ] }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "groups", "fieldPath": "previewExpiresAt", "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" } ] },
+    { "collectionGroup": "items", "fieldPath": "result", "indexes": [] },
+    { "collectionGroup": "items", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
+    { "collectionGroup": "leaderboards", "fieldPath": "entries", "indexes": [] },
+    { "collectionGroup": "leaderboards", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
+    { "collectionGroup": "chats", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
+    { "collectionGroup": "messages", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
+    { "collectionGroup": "users", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
+    { "collectionGroup": "activities", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
+    { "collectionGroup": "days", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] }
+  ]
+}

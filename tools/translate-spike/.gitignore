@@ -1,0 +1,5 @@
+node_modules/
+# Raw pages and everything derived from them (slices, reports, box drawings) stay local.
+pages*/
+results*/
+.env

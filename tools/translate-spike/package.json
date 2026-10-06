@@ -1,0 +1,9 @@
+{
+  "name": "mihon-translate-spike",
+  "private": true,
+  "type": "module",
+  "description": "T0 spike: measure Gemini page translation (boxes, quality, tokens, latency) on local raw pages. See docs/TRANSLATION_PLAN.md.",
+  "scripts": { "spike": "node spike.mjs" },
+  "engines": { "node": ">=22" },
+  "dependencies": { "@google/genai": "2.26.0" }
+}

@@ -1,0 +1,12 @@
+{
+  "score": 4,
+  "summary": "Static Firestore/RTDB Rules and trusted-domain review found no new unauthorized read, privilege escalation or ownership-update bypass. Aggregate storage and trigger amplification remain a production abuse concern. Android integration findings are recorded separately in INTEGRATION_REVIEW.md; root owns emulator and native verification.",
+  "findings": [
+    {
+      "check": "Storage Abuse / Resource Exhaustion",
+      "severity": "minor",
+      "issue": "Owner-authenticated clients may create unlimited UUID connection children, each triggering a full read of the owner branch. Several callable mutations also create unrestricted idempotency records; an expiresAt field alone does not activate deletion or bound aggregate writes.",
+      "recommendation": "Before production, enforce a bounded per-account device/connection quota and mutation budget, configure tested retention/deletion policies, and measure trigger amplification. Keep owner-private connection nodes separate from friend-facing authorization."
+    }
+  ]
+}

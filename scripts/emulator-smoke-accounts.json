@@ -1,0 +1,17 @@
+{
+  "note": "Local Firebase Auth emulator only (demo-mihon-together); wiped when emulators restart. Never valid against a real project.",
+  "accounts": [
+    {
+      "password": "yVC5XlIds8cWMt",
+      "handle": "alice_smoke",
+      "display": "Alice Smoke",
+      "email": "alice.smoke@example.test"
+    },
+    {
+      "password": "yVC5XlIds8cWMt",
+      "handle": "bob_smoke",
+      "display": "Bob Smoke",
+      "email": "bob.smoke@example.test"
+    }
+  ]
+}

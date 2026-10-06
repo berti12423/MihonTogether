@@ -1,0 +1,20 @@
+{
+  "_comment": "Copy to backend/production.json (git-ignored) and fill in from the Firebase console. These are public identifiers, not secrets.",
+  "projectId": "your-project-id",
+  "android": {
+    "apiKey": "AIza...",
+    "appId": "1:000000000000:android:0000000000000000"
+  },
+  "web": {
+    "apiKey": "AIza...",
+    "authDomain": "your-project-id.firebaseapp.com",
+    "projectId": "your-project-id",
+    "storageBucket": "your-project-id.firebasestorage.app",
+    "appId": "1:000000000000:web:0000000000000000"
+  },
+  "databaseUrl": "https://your-project-id-default-rtdb.europe-west1.firebasedatabase.app",
+  "storageBucket": "your-project-id.firebasestorage.app",
+  "enforceAppCheck": false,
+  "releasesRepo": "",
+  "hostApkOnFirebase": true
+}

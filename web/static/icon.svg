@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Mihon Together">
+  <rect width="512" height="512" rx="112" fill="#4a5aa8"/>
+  <!-- two readers -->
+  <circle cx="186" cy="150" r="46" fill="#ffffff"/>
+  <circle cx="326" cy="150" r="46" fill="#c5cdff"/>
+  <path d="M112 262c0-46 33-74 74-74s74 28 74 74z" fill="#ffffff"/>
+  <path d="M252 262c0-46 33-74 74-74s74 28 74 74z" fill="#c5cdff"/>
+  <!-- the open book they share -->
+  <path d="M256 300c-40-26-92-34-148-28v136c56-6 108 2 148 28z" fill="#ffffff"/>
+  <path d="M256 300c40-26 92-34 148-28v136c-56-6-108 2-148 28z" fill="#e3e7ff"/>
+  <path d="M256 300v136" stroke="#4a5aa8" stroke-width="8" stroke-linecap="round"/>
+  <path d="M140 316c30-2 60 3 86 14M140 350c30-2 60 3 86 14M286 330c26-11 56-16 86-14M286 364c26-11 56-16 86-14" stroke="#9aa6e0" stroke-width="8" stroke-linecap="round" fill="none"/>
+</svg>

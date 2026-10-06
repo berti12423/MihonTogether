@@ -1,0 +1,55 @@
+rules_version = '2';
+// Profile media (avatar/banner, GIFs allowed): owner writes with size and type limits; the owner and accepted
+// friends read, and everyone signed in (except people the owner blocked) while the owner is on the all-time global
+// ranking and shows their picture there. Friendship is checked against the same Firestore edges the database rules use.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function friends(a, b) {
+      return firestore.exists(/databases/(default)/documents/friendships/$(a)/accepted/$(b)) &&
+        firestore.exists(/databases/(default)/documents/friendships/$(b)/accepted/$(a));
+    }
+    // Actually on the all-time global ranking (an entry on leaderboards/alltime; the ranking is on unless turned off,
+    // not invisible) with "Show my picture on the ranking" on (absent means on): every signed-in user the owner hasn't
+    // blocked may see the avatar and banner (domain.ts rankingMedia; Berti's decision: "everyone on the ranking").
+    function rankingPicture(uid) {
+      let settings = firestore.get(/databases/(default)/documents/sharingSettings/$(uid)).data;
+      return settings.get('globalRanking', true) != false && settings.get('invisible', false) != true &&
+        settings.get('rankingMedia', true) != false &&
+        uid in firestore.get(/databases/(default)/documents/leaderboards/alltime).data.get('entries', {}) &&
+        !firestore.exists(/databases/(default)/documents/blocks/$(uid)/users/$(request.auth.uid));
+    }
+    match /profileMedia/{uid}/{kind} {
+      allow read: if request.auth != null &&
+        (request.auth.uid == uid || friends(request.auth.uid, uid) || rankingPicture(uid));
+      allow create, update: if request.auth != null && request.auth.uid == uid && kind in ['avatar', 'banner'] &&
+        request.resource.contentType.matches('image/(png|jpeg|webp|gif)') &&
+        request.resource.size > 0 &&
+        request.resource.size <= (kind == 'avatar' ? 2 * 1024 * 1024 : 5 * 1024 * 1024);
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+    // Cover thumbnails for shared titles (the web can't load many sources' own covers): owner writes small JPEG/WebP
+    // images; friends read while the owner shares their library or favorites.
+    function sharesTitles(uid) {
+      let settings = firestore.get(/databases/(default)/documents/sharingSettings/$(uid)).data;
+      return settings.library == 'friends' || settings.favorites == 'friends';
+    }
+    match /coverThumbs/{uid}/{contentKey} {
+      allow read: if request.auth != null &&
+        (request.auth.uid == uid || (friends(request.auth.uid, uid) && sharesTitles(uid)));
+      allow create, update: if request.auth != null && request.auth.uid == uid && contentKey.matches('^[a-f0-9]{64}$') &&
+        request.resource.contentType.matches('image/(jpeg|webp)') &&
+        request.resource.size > 0 && request.resource.size <= 100 * 1024;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+    // Discord status covers: Discord's servers can't fetch many sources' covers (e.g. Comix blocks them), so the app
+    // uploads the cover it already shows and gives Discord the object's download link. Only the owner reads, lists
+    // and writes here; the app keeps one cover and deletes the rest.
+    match /discordCovers/{uid}/{name} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid && name.matches('^[a-f0-9]{32}$') &&
+        request.resource.contentType == 'image/jpeg' &&
+        request.resource.size > 0 && request.resource.size <= 100 * 1024;
+    }
+    match /{path=**} { allow read, write: if false; }
+  }
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+    Online test build (website APK): no install permission. Play Protect blocks a debug-signed app that can install
+    apps ("can install harmful apps"). Extensions install privately inside the app instead, and the update screen
+    downloads the new APK through the browser (see TogetherUpdates.canInstallApks).
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" tools:node="remove" />
+
+</manifest>

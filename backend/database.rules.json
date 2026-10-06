@@ -1,0 +1,17 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "connections": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$connectionId": {
+          ".write": "auth != null && auth.uid === $uid && $connectionId.matches(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/)",
+          ".validate": "newData.hasChildren(['connectedAt'])",
+          "connectedAt": { ".validate": "newData.isNumber() && newData.val() === now" },
+          "$other": { ".validate": false }
+        }
+      }
+    }
+  }
+}

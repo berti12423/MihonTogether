@@ -1,0 +1,38 @@
+# Build files
+.gradle
+.kotlin
+build
+
+# IDE files
+*.iml
+.idea/*
+!.idea/icon.svg
+/captures
+
+# Configuration files
+keystore.properties
+local.properties
+google-services.json
+social-config.properties
+*.jks
+*.keystore
+*.p12
+.claude/settings.local.json
+
+# macOS specific files
+.DS_Store
+
+# Web companion
+web/node_modules/
+web/dist/
+backend/hosting/
+backend/.firebase/
+
+# Production Firebase identifiers and per-project function env (kept local)
+backend/production.json
+backend/.env.*
+!backend/.env.example
+
+# Discord Social SDK (proprietary; downloaded by the developer, never committed)
+third_party/discord-social-sdk/
+app/.cxx/

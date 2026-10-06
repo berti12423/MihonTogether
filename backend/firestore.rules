@@ -1,0 +1,190 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Prototype schema v1. All documents except host position updates are trusted-callable managed.
+    // profiles: schemaVersion, uid, handle, displayName, createdAt/updatedAt timestamps; no email.
+    // sharingSettings: generation int and independent private/friends switches, invisible bool.
+    // accepted: friendUid, createdAt. blocks: uid, createdAt. Both are server-written.
+    // shared entries: content bounded metadata, generation, updatedAt; activity adds chapter and expiry.
+    // rooms (v2): bounded content, hostUid/participants/members/maxMembers, state, epoch/sequence,
+    // position, writerSessionId, createdAt/updatedAt/leaseExpiresAt. Membership/lease are immutable to clients.
+    // roomLeases: hostUid/sessionId/epoch; owner-private operation fence, not independent authority.
+    // roomInvites: roomId/state/updatedAt only, owner-private discovery index without content.
+    // feeds: ring buffer of opt-in recent items (kind, content, chapterLabel, generation, createdAt, expiresAt).
+    // feedState: server-only ring cursor.
+    // rooms/{roomId}/messages: ring of chat/reaction messages (seq, senderUid, kind, text|emoji, createdAt);
+    // roomChat and roomChatRates are server-only.
+    // chats/{pairId}: participants (sorted), next, updatedAt, expiresAt; messages/{seq}: seq, senderUid, text, createdAt, expiresAt.
+    // chatIndex/{uid}/chats/{other}: chatId, otherUid, lastText, lastSenderUid, unread, updatedAt, expiresAt. All server-written.
+    // leaderboards/{day|alltime}: entries {uid: handle, displayName, accent, avatar, banner, chapters, streak|xp, level, updatedAt},
+    // top 50, server-written. avatar/banner are {version, contentType} or null (only with rankingMedia).
+    // xp/{uid}: total, level, day, today, chapters, together, streak, bestStreak; server-written.
+    // groups/{groupId}: name, ownerUid, members (join order), names {uid: name, handle, accent, since, joinedAt}, next;
+    // messages/{seq}: seq, kind (text|event), senderUid, senderName, text, event?, createdAt, expiresAt.
+    // groupIndex/{uid}/groups/{groupId}: name, members, lastText, lastSenderName, unread, updatedAt. All server-written.
+    // readWishes/{pairId}/items/{contentKey}: both people's "let's read this" flags; server-only (one-sided wishes stay hidden).
+    // readWishIndex/{uid}/items/{otherUid}_{contentKey}: otherUid, contentKey, content, matched, matchedAt, createdAt, expiresAt.
+    // rooms.open: bool, server-written (drop-ins allowed); rooms.members.{uid}.page: {chapterKey, pageIndex, at}, the
+    // member's own place, server-written through the position action (room members see each other's page).
+    // readWishLimits/{uid}: server-only daily counter. rooms.startChapterLabel: chapter label at creation (optional, server-written).
+    // shared library entries may carry progress {read, total, finished} (optional, server-validated).
+    // reviews/{uid}/items/{workKey}: workKey, content, rating (1-5), text (null or <= 1000), createdAt, updatedAt; server-written.
+    // reviewLimits/{uid}: server-only daily counter. sharingSettings.reviews and .progress: bool, absent means on
+    // (progress off: publishEntries stores library entries without progress).
+
+    function authenticated() { return request.auth != null; }
+    function owner(uid) { return authenticated() && request.auth.uid == uid; }
+    function noBlocks(a, b) {
+      return !exists(/databases/$(database)/documents/blocks/$(a)/users/$(b)) &&
+        !exists(/databases/$(database)/documents/blocks/$(b)/users/$(a));
+    }
+    function friends(a, b) {
+      return authenticated() && a != b && noBlocks(a, b) &&
+        exists(/databases/$(database)/documents/friendships/$(a)/accepted/$(b)) &&
+        exists(/databases/$(database)/documents/friendships/$(b)/accepted/$(a));
+    }
+    function sharing(uid) { return get(/databases/$(database)/documents/sharingSettings/$(uid)).data; }
+    function shares(uid, field) { return friends(request.auth.uid, uid) && sharing(uid)[field] == 'friends'; }
+    function bounded(value, minimum, maximum) { return value is string && value.size() >= minimum && value.size() <= maximum; }
+    function contentKey(value) { return value is string && value.matches('^[a-f0-9]{64}$'); }
+    function sessionId(value) { return value is string && value.matches('^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'); }
+    function validContent(data) {
+      return data is map && data.keys().hasAll(['contentKey','title','sourceKey','sourceWorkKey','editionKey','canonicalProvider','canonicalId']) &&
+        data.keys().hasOnly(['contentKey','title','sourceKey','sourceWorkKey','editionKey','canonicalProvider','canonicalId','coverUrl','source','thumb']) &&
+        (!('thumb' in data) || data.thumb == true) &&
+        (!('source' in data) || (data.source is map && data.source.keys().hasOnly(['id','name','lang','pkg','url']) &&
+          bounded(data.source.id,1,20) && bounded(data.source.name,1,80) && bounded(data.source.lang,1,12) &&
+          (data.source.pkg == null || bounded(data.source.pkg,3,150)) &&
+          (!('url' in data.source) || (bounded(data.source.url,1,500) &&
+            data.source.url.matches('^(/[^\\s\\x00-\\x1F\\x7F]*|https://[^\\s\\x00-\\x1F\\x7F]+)$'))))) &&
+        (!('coverUrl' in data) || (bounded(data.coverUrl,9,500) && data.coverUrl.matches('^https://[^\\s]+$'))) &&
+        contentKey(data.contentKey) && bounded(data.title,1,200) && bounded(data.sourceKey,1,160) &&
+        contentKey(data.sourceWorkKey) && contentKey(data.editionKey) &&
+        ((data.canonicalProvider == null && data.canonicalId == null) ||
+          (data.canonicalProvider in ['anilist','mal','kitsu','mangaupdates'] && bounded(data.canonicalId,1,64)));
+    }
+    function validPosition(data) {
+      return data is map && data.keys().hasAll(['chapterKey','chapterLabel','pageIndex','pageCount','pageMappingKey']) &&
+        data.keys().hasOnly(['chapterKey','chapterLabel','pageIndex','pageCount','pageMappingKey','stripPosition']) &&
+        contentKey(data.chapterKey) && bounded(data.chapterLabel,1,100) && contentKey(data.pageMappingKey) &&
+        data.pageCount is int && data.pageCount >= 1 && data.pageCount <= 2000 &&
+        data.pageIndex is int && data.pageIndex >= 0 && data.pageIndex < data.pageCount &&
+        (!('stripPosition' in data) || (data.stripPosition is number && data.stripPosition >= 0 && data.stripPosition < data.pageCount));
+    }
+    // Group rooms (schemaVersion 2): participants = everyone with access (2..6, host first after creation, any order
+    // after a hand-off), members = server-written name/state snapshot. Clients only ever write host positions.
+    function validRoom(data) {
+      return data.keys().hasAll(['schemaVersion','hostUid','participants','members','maxMembers','content','state','epoch','sequence','position','writerSessionId','createdAt','updatedAt','leaseExpiresAt']) &&
+        data.keys().hasOnly(['schemaVersion','hostUid','participants','members','maxMembers','content','state','epoch','sequence','position','writerSessionId','createdAt','updatedAt','leaseExpiresAt','startChapterLabel','open']) &&
+        data.schemaVersion == 2 && bounded(data.hostUid,1,128) &&
+        data.participants is list && data.participants.size() >= 1 && data.participants.size() <= 6 && data.hostUid in data.participants &&
+        data.members is map && data.maxMembers == 6 &&
+        validContent(data.content) && data.state in ['invited','active','closed'] &&
+        data.epoch is int && data.epoch >= 1 && data.epoch <= 2147483647 &&
+        data.sequence is int && data.sequence >= 0 && data.sequence <= 2147483647 &&
+        (data.position == null || validPosition(data.position)) && (data.writerSessionId == null || sessionId(data.writerSessionId)) &&
+        (!('startChapterLabel' in data) || data.startChapterLabel == null || bounded(data.startChapterLabel,1,100)) &&
+        (!('open' in data) || data.open is bool) &&
+        data.createdAt is timestamp && data.updatedAt is timestamp && data.leaseExpiresAt is timestamp;
+    }
+    // Readable by the host and by members who are the host's friends, while open and leased.
+    function activeRoom(data) {
+      return authenticated() && request.auth.uid in data.participants && data.state in ['invited','active'] &&
+        data.leaseExpiresAt > request.time && (request.auth.uid == data.hostUid || friends(data.hostUid, request.auth.uid));
+    }
+    function validHostPosition(roomId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let lease = get(/databases/$(database)/documents/roomLeases/$(roomId)).data;
+      return validRoom(after) && activeRoom(before) && before.state == 'active' && owner(before.hostUid) &&
+        lease.hostUid == request.auth.uid && lease.epoch == before.epoch && after.writerSessionId == lease.sessionId &&
+        after.diff(before).affectedKeys().hasOnly(['position','sequence','writerSessionId','updatedAt']) &&
+        validPosition(after.position) && after.sequence == before.sequence + 1 && after.updatedAt == request.time;
+    }
+    function projection(uid, field) {
+      return shares(uid, field) && resource.data.generation == sharing(uid).generation;
+    }
+
+    match /profiles/{uid} { allow read: if owner(uid) || friends(request.auth.uid, uid); }
+    match /accounts/{uid} { allow read: if owner(uid); }
+    match /sharingSettings/{uid} { allow read: if owner(uid); }
+    match /friendships/{uid}/accepted/{other} { allow read: if owner(uid); }
+    match /blocks/{uid}/users/{other} { allow read: if owner(uid); }
+    match /hiddenTitles/{uid}/entries/{key} { allow read: if owner(uid); }
+    match /operations/{uid}/items/{operationId} { allow read: if owner(uid); }
+    match /friendRequests/{id} {
+      allow read: if authenticated() && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+    }
+    match /sharedLibraries/{uid}/entries/{key} { allow read: if owner(uid) || projection(uid, 'library'); }
+    match /sharedFavorites/{uid}/entries/{key} { allow read: if owner(uid) || projection(uid, 'favorites'); }
+    match /activities/{uid} {
+      // An authorized absent document is a cleared activity, allowing the listener to resume publication.
+      allow read: if owner(uid) || (shares(uid, 'activity') &&
+        (!exists(/databases/$(database)/documents/activities/$(uid)) ||
+          (resource.data.generation == sharing(uid).generation && resource.data.expiresAt > request.time)));
+    }
+    match /presence/{uid} { allow read: if owner(uid) || (shares(uid, 'presence') && !sharing(uid).invisible); }
+    match /feeds/{uid}/items/{slot} {
+      // Friends see only current-generation, unexpired items while the owner is visible.
+      allow read: if owner(uid) || (projection(uid, 'feed') && !sharing(uid).invisible && resource.data.expiresAt > request.time);
+    }
+    match /dailyStats/{uid}/days/{day} {
+      // Daily ranking: today's counters, friends only, current generation, owner visible.
+      allow read: if owner(uid) || (projection(uid, 'stats') && !sharing(uid).invisible);
+    }
+    // Private chats: both people, while they're still friends (blocking or unfriending revokes at once).
+    function chatMember(chatId) {
+      let chat = get(/databases/$(database)/documents/chats/$(chatId)).data;
+      return authenticated() && request.auth.uid in chat.participants && friends(chat.participants[0], chat.participants[1]);
+    }
+    match /chats/{chatId} { allow read: if chatMember(chatId); }
+    match /chats/{chatId}/messages/{messageId} { allow read: if chatMember(chatId); }
+    match /chatIndex/{uid}/chats/{other} { allow read: if owner(uid); }
+    // "Ask to read along" requests to me; written by the callable, expire after 10 minutes.
+    match /joinRequests/{uid}/items/{requester} { allow read: if owner(uid); }
+    // XP and level: the owner, and friends while stats are shared and the owner is visible.
+    match /xp/{uid} { allow read: if owner(uid) || (shares(uid, 'stats') && !sharing(uid).invisible); }
+    // Group chats: current members only; messages from the point each member joined.
+    match /groups/{groupId} { allow read: if authenticated() && request.auth.uid in resource.data.members; }
+    match /groups/{groupId}/messages/{messageId} {
+      allow read: if authenticated() && groupReadable(get(/databases/$(database)/documents/groups/$(groupId)).data);
+    }
+    function groupReadable(group) {
+      return request.auth.uid in group.members && resource.data.seq >= group.names[request.auth.uid].since;
+    }
+    match /groupIndex/{uid}/groups/{groupId} { allow read: if owner(uid); }
+    // "Let's read this": my own wishes only; the pair documents and limits have no client access (default deny below).
+    match /readWishIndex/{uid}/items/{id} { allow read: if owner(uid); }
+    // Ratings and reviews: the owner, and friends while the owner's reviews switch is on (absent means on) and the
+    // owner is visible. No document field is consulted, so friends may list the whole collection.
+    function reviewsShared(uid) {
+      let settings = sharing(uid);
+      return friends(request.auth.uid, uid) && settings.get('reviews', true) != false && settings.invisible != true;
+    }
+    match /reviews/{uid}/items/{workKey} { allow read: if owner(uid) || reviewsShared(uid); }
+    match /leaderboards/{day} {
+      // Global ranking: public fields of people who didn't opt out, readable by any signed-in user.
+      allow read: if authenticated();
+    }
+    match /lastSeen/{uid} { allow read: if owner(uid) || (shares(uid, 'lastSeen') && !sharing(uid).invisible); }
+    match /roomLeases/{roomId} { allow read: if owner(resource.data.hostUid); }
+    match /roomInvites/{uid}/items/{roomId} { allow read: if owner(uid); }
+    match /rooms/{roomId} {
+      allow read: if activeRoom(resource.data);
+      allow update: if validHostPosition(roomId);
+    }
+    // Open rooms (2026-10-06): the drop-in card of a friend's open room (roomId, hostUid, title, memberCount, maxMembers,
+    // generation, updatedAt, leaseExpiresAt; server-written). Readable by friends who see the host's activity, for the
+    // current generation, while the host is visible and the lease is live. An authorized absent card is "no open room".
+    match /openRooms/{uid} {
+      allow read: if owner(uid) || (shares(uid, 'activity') && !sharing(uid).invisible &&
+        (!exists(/databases/$(database)/documents/openRooms/$(uid)) ||
+          (resource.data.generation == sharing(uid).generation && resource.data.leaseExpiresAt > request.time)));
+    }
+    match /rooms/{roomId}/messages/{slot} {
+      // Readable exactly while the room itself is: participants, live friendship, open state, unexpired lease.
+      allow read: if activeRoom(get(/databases/$(database)/documents/rooms/$(roomId)).data);
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
