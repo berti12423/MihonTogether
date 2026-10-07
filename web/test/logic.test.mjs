@@ -259,3 +259,57 @@ test("open rooms: live, not full and not mine, fullest first; cards parse to the
     { roomId: "r", hostUid: "host", title: "X", memberCount: 2, maxMembers: 6, leaseExpiresAt: 5 });
   assert.equal(logic.parseOpenRoom("host", { title: "no id" }), null);
 });
+
+test("XP rules and monthly challenges mirror the backend (same list as its XP rules table test)", async () => {
+  assert.deepEqual({ ...logic.XP_RULES }, { chapter: 10, together: 5, streakDay: 5, streakMaxDays: 7, dailyCap: 1000, maxFreezes: 2, freezeEveryDays: 7, challengeXp: 100 });
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 10].map(logic.xpForLevel), [0, 50, 150, 300, 500, 750, 2250]);
+  assert.deepEqual(logic.CHALLENGES.map((c) => [c.id, c.field, c.min]), [
+    ["chapters_100", "chapters", 100], ["chapters_200", "chapters", 200], ["days_15", "days", 15], ["days_20", "days", 20],
+    ["together_5", "together", 5], ["together_10", "together", 10], ["streak_7", "streak", 7], ["streak_14", "streak", 14],
+    ["binge_15", "bestDay", 15], ["xp_2000", "xp", 2000]]);
+  assert.deepEqual(logic.CHALLENGE_ROTATION, [
+    ["chapters_100", "days_15", "streak_7"], ["chapters_200", "together_5", "binge_15"], ["days_20", "together_10", "xp_2000"],
+    ["chapters_100", "streak_14", "together_5"], ["days_15", "binge_15", "xp_2000"], ["chapters_200", "days_20", "together_10"],
+    ["chapters_100", "together_5", "streak_14"], ["days_20", "streak_7", "xp_2000"], ["chapters_200", "binge_15", "together_10"],
+    ["chapters_100", "days_20", "together_10"], ["days_15", "streak_14", "xp_2000"], ["chapters_200", "together_5", "streak_7"]]);
+  // And straight from domain.ts.
+  const { readFile } = await import("node:fs/promises");
+  const domain = await readFile(new URL("../../backend/src/domain.ts", import.meta.url), "utf8");
+  const xp = domain.split("export const XP = {")[1].split("}")[0];
+  for (const key of ["chapter", "together", "streakDay", "streakMaxDays", "dailyCap"]) {
+    assert.equal(Number(new RegExp(`${key}: ([\\d_]+)`).exec(xp)[1].replaceAll("_", "")), logic.XP_RULES[key], key);
+  }
+  assert.equal(Number(/MAX_FREEZES = (\d+)/.exec(domain)[1]), logic.XP_RULES.maxFreezes);
+  assert.equal(Number(/CHALLENGE_XP = (\d+)/.exec(domain)[1]), logic.XP_RULES.challengeXp);
+  const pool = domain.split("export const CHALLENGES")[1].split("];")[0];
+  assert.deepEqual([...pool.matchAll(/id: "(\w+)", field: "(\w+)", min: (\d+)/g)].map((m) => [m[1], m[2], Number(m[3])]),
+    logic.CHALLENGES.map((c) => [c.id, c.field, c.min]));
+  const rotation = domain.split("export const CHALLENGE_ROTATION")[1].split("];")[0].split("= [")[1];
+  assert.deepEqual([...rotation.matchAll(/"(\w+)"/g)].map((m) => m[1]), logic.CHALLENGE_ROTATION.flat());
+});
+
+test("challenge progress: this month's counters and stamps; season badges render generically", () => {
+  assert.equal(logic.monthOf(Date.UTC(2026, 9, 31, 23, 59)), "2026-10");
+  assert.equal(logic.monthName("2026-10"), "October 2026");
+  const xp = { month: { id: "2026-10", chapters: 40, days: 20, together: 3, streak: 0, bestDay: 0, xp: 0 }, challenges: { "2026-10": ["days_20"] } };
+  assert.deepEqual(logic.challengeProgress(xp, "2026-10").map((p) => [p.challenge.id, p.value, p.done]),
+    [["chapters_100", 40, false], ["days_20", 20, true], ["together_10", 3, false]]);
+  assert.ok(logic.challengeProgress(xp, "2026-11").every((p) => p.value === 0 && !p.done));
+  assert.ok(logic.challengeProgress(null, "2026-10").every((p) => !p.done));
+  assert.deepEqual(logic.seasons({ first_chapter: 1, season_2026_09: 5, season_2026_10: 9, season_2026_13: 3 }),
+    [{ month: "2026-10", at: 9 }, { month: "2026-09", at: 5 }]);
+});
+
+test("recent activity collapses repeats of a title into one entry, newest first", () => {
+  const item = (kind, contentKey, title, chapterLabel, createdAt) => ({ kind, contentKey, title, chapterLabel, createdAt });
+  const groups = logic.groupRecent([
+    item("chapter_read", "a", "Frieren", "Chapter 40", 300),
+    item("chapter_read", "b", "Kaguya", "Chapter 2", 250),
+    item("chapter_read", "a", "Frieren", "Chapter 41", 400),
+    item("favorite_added", "a", "Frieren", null, 100),
+    item("chapter_read", "", "Old title", "Chapter 1", 50),
+  ]);
+  assert.deepEqual(groups.map((g) => g.latest.title), ["Frieren", "Kaguya", "Old title"]);
+  assert.equal(groups[0].chapters, 2); assert.equal(groups[0].lastChapter, "Chapter 41"); assert.equal(groups[0].favorited, true);
+  assert.equal(groups[1].chapters, 1); assert.equal(groups[1].favorited, false);
+});

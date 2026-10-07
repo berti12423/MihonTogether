@@ -229,6 +229,7 @@ class FriendsScreen(
             loadMedia = viewModel::loadMedia,
             prefillHandle = prefillHandle,
             notificationPreference = viewModel::notificationPreference,
+            onOpenStats = { navigator.push(SocialStatsScreen()) },
         )
     }
 }
@@ -251,6 +252,7 @@ fun FriendsContent(
     prefillHandle: String? = null,
     notificationPreference: (String) -> Preference<Boolean>? = { null },
     onBrowseSource: (Long, String) -> Unit = { _, title -> onSearch(title) },
+    onOpenStats: () -> Unit = {},
 ) {
     // Every title picker below (chats, groups, Read together, favorites) shows my library's own covers.
     CompositionLocalProvider(LocalTitleCovers provides state.covers) {
@@ -264,6 +266,7 @@ fun FriendsContent(
             prefillHandle,
             notificationPreference,
             onBrowseSource,
+            onOpenStats,
         )
     }
 }
@@ -279,6 +282,7 @@ private fun FriendsBody(
     prefillHandle: String?,
     notificationPreference: (String) -> Preference<Boolean>?,
     onBrowseSource: (Long, String) -> Unit,
+    onOpenStats: () -> Unit,
 ) {
     var picked by remember { mutableStateOf<SocialContent?>(null) }
     var friendsFor by remember { mutableStateOf<SocialContent?>(null) }
@@ -582,6 +586,7 @@ private fun FriendsBody(
                                 onIntent(FriendsIntent.ReadTogether(content.contentKey, listOf(uid)))
                             },
                             onPick = { picked = it },
+                            onOpenStats = onOpenStats,
                         )
                     }
                 }
@@ -743,9 +748,20 @@ private fun LazyListScope.meTab(
     notificationPreference: (String) -> Preference<Boolean>?,
     onReadTogether: (SocialContent, String) -> Unit,
     onPick: (SocialContent) -> Unit,
+    onOpenStats: () -> Unit,
 ) {
     val account = state.account ?: return
     item { XpCard(state.xp) }
+    item {
+        var howOpen by rememberSaveable { mutableStateOf(false) }
+        ChallengesCard(state.xp, compact = true) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onOpenStats) { Text(stringResource(MR.strings.stats_open)) }
+                TextButton(onClick = { howOpen = true }) { Text(stringResource(MR.strings.xp_how_title)) }
+            }
+        }
+        if (howOpen) HowXpWorksDialog(onDismiss = { howOpen = false })
+    }
     item {
         Text(account.email.orEmpty())
         if (!account.verified) {
@@ -780,6 +796,7 @@ private fun LazyListScope.meTab(
             }
         }
     }
+    item { DataUsageCard() }
     item {
         // Support: which Firebase service fails (e.g. only on mobile data).
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1025,6 +1042,7 @@ private fun LazyListScope.friendDetail(
                 Text(stringResource(XpLevels.title(xp.level)), Modifier.padding(start = 8.dp))
             }
             BadgeRow(xp.badges)
+            FriendStatsSection(xp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { onIntent(FriendsIntent.OpenChat(friend.profile.uid)) }) {
@@ -1186,7 +1204,7 @@ private fun RankingCard(state: FriendsState, onIntent: (FriendsIntent) -> Unit, 
             val you = stringResource(MR.strings.reader_social_you)
             val score: @Composable (RankingEntry) -> String = { entry ->
                 when {
-                    weekly -> stringResource(MR.strings.social_ranking_xp, entry.weekXp)
+                    weekly -> stringResource(MR.strings.social_ranking_xp_chapters, entry.weekXp, entry.chapters)
                     allTime -> stringResource(MR.strings.social_ranking_xp_chapters, entry.totalXp, entry.chapters)
                     else -> stringResource(MR.strings.social_ranking_chapters, entry.chapters)
                 }

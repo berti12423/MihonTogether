@@ -100,6 +100,16 @@ object TogetherUpdates {
     }
 
     /**
+     * "Check for updates" in More → About: the newer website build, or null when this one is the latest. Unlike
+     * [check] it throws when the check fails, so the screen can say so instead of "no updates".
+     */
+    suspend fun checkNow(network: NetworkHelper): TogetherRelease? {
+        val base = baseUrl ?: return null
+        val body = network.client.newCall(GET("$base/files/apk.json")).awaitSuccess().use { it.body.string() }
+        return parse(body, base)?.takeIf { it.build > currentBuild }
+    }
+
+    /**
      * False in the online build, which leaves out the install permission (Play Protect blocks it, see
      * src/preview/AndroidManifest.xml): updates download through the browser, extensions install privately.
      */
@@ -113,6 +123,10 @@ object TogetherUpdates {
 
     /** The website's APK is the arm64 build; other phones get the download page instead. */
     fun installable(): Boolean = Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a"
+
+    /** The day (epoch day) the update screen last opened by itself at app start: at most once a day. */
+    fun popupShownDay(store: PreferenceStore): Preference<Int> =
+        store.getInt(Preference.appStateKey("together_update_popup_day"), -1)
 
     /** Remembers which build was already announced, so each one notifies (and opens the screen) once. */
     fun announced(store: PreferenceStore): Preference<Int> =

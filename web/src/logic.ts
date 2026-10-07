@@ -113,6 +113,61 @@ export const BADGES: Array<[string, string, string, string]> = [
   ["recruit_10", "🏰", "Brought 10 Friends", "10 friends you invited read 5 chapters each."],
 ];
 
+/**
+ * The backend's XP rules (domain.ts `XP`, `MAX_FREEZES`, `CHALLENGE_XP`) for "How XP works". The backend's
+ * "XP rules table" test and logic.test.mjs assert the same values, so drift fails a test.
+ */
+export const XP_RULES = { chapter: 10, together: 5, streakDay: 5, streakMaxDays: 7, dailyCap: 1000, maxFreezes: 2, freezeEveryDays: 7, challengeXp: 100 } as const;
+
+export type ChallengeField = "chapters" | "days" | "together" | "streak" | "bestDay" | "xp";
+/** The backend's CHALLENGES pool: id, counter, target, icon, label. */
+export const CHALLENGES: Array<{ id: string; field: ChallengeField; min: number; icon: string; label: string }> = [
+  { id: "chapters_100", field: "chapters", min: 100, icon: "📚", label: "Read 100 chapters" },
+  { id: "chapters_200", field: "chapters", min: 200, icon: "🏛️", label: "Read 200 chapters" },
+  { id: "days_15", field: "days", min: 15, icon: "📅", label: "Read on 15 different days" },
+  { id: "days_20", field: "days", min: 20, icon: "🗓️", label: "Read on 20 different days" },
+  { id: "together_5", field: "together", min: 5, icon: "🤝", label: "Read 5 chapters together" },
+  { id: "together_10", field: "together", min: 10, icon: "💞", label: "Read 10 chapters together" },
+  { id: "streak_7", field: "streak", min: 7, icon: "🔥", label: "Reach a 7-day streak" },
+  { id: "streak_14", field: "streak", min: 14, icon: "⚔️", label: "Reach a 14-day streak" },
+  { id: "binge_15", field: "bestDay", min: 15, icon: "🌙", label: "Read 15 chapters in one day" },
+  { id: "xp_2000", field: "xp", min: 2000, icon: "⭐", label: "Earn 2000 XP from reading" },
+];
+/** January..December, like the backend's CHALLENGE_ROTATION. */
+export const CHALLENGE_ROTATION: string[][] = [
+  ["chapters_100", "days_15", "streak_7"], ["chapters_200", "together_5", "binge_15"],
+  ["days_20", "together_10", "xp_2000"], ["chapters_100", "streak_14", "together_5"],
+  ["days_15", "binge_15", "xp_2000"], ["chapters_200", "days_20", "together_10"],
+  ["chapters_100", "together_5", "streak_14"], ["days_20", "streak_7", "xp_2000"],
+  ["chapters_200", "binge_15", "together_10"], ["chapters_100", "days_20", "together_10"],
+  ["days_15", "streak_14", "xp_2000"], ["chapters_200", "together_5", "streak_7"],
+];
+/** The UTC month, "yyyy-mm". */
+export function monthOf(now: number = Date.now()): string { return new Date(now).toISOString().slice(0, 7); }
+export function challengesFor(month: string) {
+  return (CHALLENGE_ROTATION[Number(month.slice(5, 7)) - 1] ?? []).map((id) => CHALLENGES.find((c) => c.id === id)!);
+}
+export interface XpMonth { id: string; chapters: number; days: number; together: number; streak: number; bestDay: number; xp: number }
+/** [month]'s challenges with progress from `xp.month` (another month's counters count as 0) and the stamps. */
+export function challengeProgress(xp: { month: XpMonth | null; challenges: Record<string, string[]> } | null, month: string = monthOf()) {
+  const counters = xp?.month?.id === month ? xp.month : null;
+  const done = xp?.challenges[month] ?? [];
+  return challengesFor(month).map((challenge) => {
+    const value = counters ? counters[challenge.field] : 0;
+    return { challenge, value, done: done.includes(challenge.id) || value >= challenge.min };
+  });
+}
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+/** "October 2026" for "yyyy-mm". */
+export function monthName(month: string): string { return `${MONTHS[Number(month.slice(5, 7)) - 1] ?? "?"} ${month.slice(0, 4)}`; }
+/** Season badges (`season_yyyy_mm`) as "yyyy-mm" with the unlock time, newest first. */
+export function seasons(badges: Record<string, number>): Array<{ month: string; at: number }> {
+  return Object.entries(badges).flatMap(([id, at]) => {
+    const match = /^season_(\d{4})_(0[1-9]|1[0-2])$/.exec(id);
+    return match ? [{ month: `${match[1]}-${match[2]}`, at: Number(at) }] : [];
+  }).sort((a, b) => b.month.localeCompare(a.month));
+}
+
 /** The UTC Monday that starts the week, yyyymmdd (weekly XP resets then), like the backend's weekOf. */
 export function weekOf(now: number = Date.now()): string {
   const daysSinceMonday = (new Date(now).getUTCDay() + 6) % 7;
@@ -373,4 +428,27 @@ export function withoutBlocked(reactions: Record<string, string>, blocked: Set<s
 export function gettingStarted(flags: { profile: boolean; privacy: boolean; library: boolean; friend: boolean }) {
   const steps = (["profile", "privacy", "library", "friend"] as const).map((id) => ({ id, done: flags[id] }));
   return { steps, done: steps.filter((s) => s.done).length, complete: steps.every((s) => s.done) };
+}
+
+/**
+ * A friend's recent activity, one entry per title (newest first): the latest event, how many chapters they read
+ * recently, and whether they favorited it. Keyed by content key, or the title when an old item has none.
+ */
+export interface RecentTitle<T> { latest: T; chapters: number; favorited: boolean; lastChapter: string | null }
+export function groupRecent<T extends { kind: string; title: string; contentKey: string; chapterLabel: string | null; createdAt: number }>(
+  items: T[],
+): RecentTitle<T>[] {
+  const groups = new Map<string, RecentTitle<T>>();
+  for (const item of [...items].sort((a, b) => b.createdAt - a.createdAt)) {
+    const key = item.contentKey || `title:${item.title.toLowerCase()}`;
+    let group = groups.get(key);
+    if (!group) groups.set(key, group = { latest: item, chapters: 0, favorited: false, lastChapter: null });
+    if (item.kind === "chapter_read") {
+      group.chapters++;
+      group.lastChapter ??= item.chapterLabel;
+    } else if (item.kind === "favorite_added") {
+      group.favorited = true;
+    }
+  }
+  return [...groups.values()];
 }

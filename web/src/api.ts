@@ -2,7 +2,7 @@ import { httpsCallable } from "firebase/functions";
 import {
   collection, doc, documentId, getDoc, getDocFromServer, getDocs, limit, onSnapshot, orderBy, query, Timestamp, where,
 } from "firebase/firestore";
-import { getBytes, ref } from "firebase/storage";
+import { getBytes, ref, uploadBytes } from "firebase/storage";
 import { auth, db, functions, storage } from "./firebase";
 import { OpenRoom, parseOpenRoom, parseSharing, Sharing, statsDay } from "./logic";
 
@@ -11,7 +11,11 @@ export interface Profile {
   uid: string; handle: string; displayName: string; bio: string; accent: number; avatar: Media | null; banner: Media | null;
 }
 export interface Content { contentKey: string; title: string }
-export interface FeedItem { kind: string; title: string; chapterLabel: string | null; createdAt: number }
+export interface FeedItem {
+  kind: string; title: string; chapterLabel: string | null; createdAt: number;
+  /** For the cover: the title's key, its source cover link, whether the owner uploaded a thumbnail, tracker IDs. */
+  contentKey: string; coverUrl: string | null; thumb: boolean; anilistId: number | null; malId: number | null;
+}
 export interface Request { id: string; senderUid: string; recipientUid: string; name: string | null; handle: string | null }
 
 const uuid = () => crypto.randomUUID();
@@ -56,6 +60,21 @@ export async function requestFriend(handle: string, viaInvite = false): Promise<
 }
 export const friendAction = (action: string, otherUid: string) => call("socialFriendAction", mutation({ action, otherUid }));
 export const deleteAccount = () => call("socialDeleteAccount", { confirm: "DELETE" });
+
+/** Profile look, as in the app: the same limits as storage.rules and the backend (GIFs allowed). */
+export const PROFILE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+export const PROFILE_MEDIA_MAX = { avatar: 2 * 1024 * 1024, banner: 5 * 1024 * 1024 } as const;
+export type MediaAction = "keep" | "set" | "remove";
+/** Uploads my avatar or banner; `updateProfileStyle` with "set" then publishes it. */
+export async function uploadProfileMedia(kind: "avatar" | "banner", file: File): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Sign in first.");
+  await uploadBytes(ref(storage, `profileMedia/${uid}/${kind}`), file, { contentType: file.type });
+}
+export async function updateProfileStyle(bio: string, accent: number, avatar: MediaAction, banner: MediaAction): Promise<Profile> {
+  const result = await call<{ profile: Record<string, unknown> }>("socialUpdateProfileStyle", mutation({ bio, accent, avatar, banner }));
+  return toProfile(result.profile);
+}
 
 export async function getFriend(uid: string): Promise<{ profile: Profile; sharing: Sharing }> {
   const result = await call<{ profile: Record<string, unknown>; sharing: Record<string, unknown> }>("socialGetFriend", { otherUid: uid });
@@ -118,8 +137,11 @@ export async function loadFeed(uid: string, generation: number): Promise<FeedIte
   const snapshot = await getDocs(query(collection(db, `feeds/${uid}/items`), where("generation", "==", generation),
     where("expiresAt", ">", Timestamp.fromMillis(Date.now() + 3_600_000)), orderBy("expiresAt", "desc"), limit(20)));
   return snapshot.docs.map((d) => {
-    const data = d.data();
-    return { kind: String(data.kind), title: String(data.content?.title ?? ""), chapterLabel: data.chapterLabel ?? null, createdAt: millis(data.createdAt) };
+    const data = d.data(), content = (data.content ?? {}) as Record<string, unknown>;
+    const canonical = (provider: string) => (content.canonicalProvider === provider ? Number(content.canonicalId) || null : null);
+    return { kind: String(data.kind), title: String(content.title ?? ""), chapterLabel: data.chapterLabel ?? null, createdAt: millis(data.createdAt),
+      contentKey: String(content.contentKey ?? ""), coverUrl: typeof content.coverUrl === "string" ? content.coverUrl : null,
+      thumb: content.thumb === true, anilistId: canonical("anilist"), malId: canonical("mal") };
   });
 }
 

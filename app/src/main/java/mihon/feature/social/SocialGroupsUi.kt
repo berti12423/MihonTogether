@@ -522,7 +522,12 @@ fun XpCard(xp: SocialXp?) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    stringResource(MR.strings.social_badges_count, xp.badges.size, Badge.entries.size),
+                    // Season badges (season_yyyy_mm) are listed on the stats page, not in this count.
+                    stringResource(
+                        MR.strings.social_badges_count,
+                        Badge.entries.count { it.id in xp.badges },
+                        Badge.entries.size,
+                    ),
                     style = MaterialTheme.typography.titleSmall,
                 )
                 BadgeRow(xp.badges, showLocked = true)

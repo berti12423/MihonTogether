@@ -317,7 +317,7 @@ class ReadingTogetherCoordinator(
                     room.members.values.count { it.state == mihon.feature.social.RoomMember.JOINED } >= 2
                 }
                 val reward = repository.recordChapter(consent.generation, reading.position.pageCount, room?.id)
-                if (reward != null && (reward.leveledUp || reward.unlocked.isNotEmpty() || reward.freezeUsed > 0)) {
+                if (reward != null && reward.notable) {
                     levelUpEvents.tryEmit(reward)
                 }
             }

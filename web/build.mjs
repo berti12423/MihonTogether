@@ -21,12 +21,14 @@ await build({
 });
 cpSync("static", "dist", { recursive: true });
 
-const policy = marked.parse(readFileSync("../docs/PRIVACY_POLICY.md", "utf8"));
-const page = readFileSync("static/index.html", "utf8")
-  .replace("<title>Mihon Together</title>", "<title>Privacy policy – Mihon Together</title>")
-  .replace('<main id="app"></main>', `<main id="policy" class="policy">${policy}</main>`)
+// Static legal pages from the docs (no app script): privacy policy and terms of use.
+const legalPage = (markdown, title, path) => readFileSync("static/index.html", "utf8")
+  .replace("<title>Mihon Together</title>", `<title>${title} – Mihon Together</title>`)
+  .replace('<link rel="canonical" href="https://mihontogether.web.app/">', `<link rel="canonical" href="https://mihontogether.web.app${path}">`)
+  .replace('<main id="app"></main>', `<main id="policy" class="policy">${marked.parse(readFileSync(markdown, "utf8"))}</main>`)
   .replace('<script type="module" src="/app.js"></script>', "");
-writeFileSync("dist/privacy.html", page);
+writeFileSync("dist/privacy.html", legalPage("../docs/PRIVACY_POLICY.md", "Privacy policy", "/privacy"));
+writeFileSync("dist/terms.html", legalPage("../docs/TERMS.md", "Terms of use", "/terms"));
 
 // Patch notes for the website (and the app's update screen, through apk.json): docs/WHATS_NEW.md, one "## " section
 // per release, newest first. Plain text items only, so nothing in the file is ever treated as HTML.

@@ -170,6 +170,9 @@ class MainActivity : BaseActivity() {
             return
         }
 
+        // A Discord status left behind by a force-stop or crash is cleared on the next start.
+        if (isLaunch) mihon.feature.discord.SocialSdkDiscordPresence.clearIfLingering(this)
+
         setComposeContent {
             val context = LocalContext.current
 
@@ -318,14 +321,15 @@ class MainActivity : BaseActivity() {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
 
-        // Mihon Together test builds: the website's build, shown once per new build (the background check also
-        // notifies; tapping that notification opens this screen again).
+        // Mihon Together builds from the website: while a newer build exists, the update screen opens at most once a
+        // day (a notification alone was easy to miss). The background check notifies separately.
         LaunchedEffect(Unit) {
             val graph = context.appGraph
             val release = mihon.feature.update.TogetherUpdates.check(graph.networkHelper) ?: return@LaunchedEffect
-            val announced = mihon.feature.update.TogetherUpdates.announced(graph.preferenceStore)
-            if (announced.get() >= release.build) return@LaunchedEffect
-            announced.set(release.build)
+            val shownDay = mihon.feature.update.TogetherUpdates.popupShownDay(graph.preferenceStore)
+            val today = (System.currentTimeMillis() / 86_400_000L).toInt()
+            if (shownDay.get() == today) return@LaunchedEffect
+            shownDay.set(today)
             navigator.push(togetherUpdateScreen(context, release))
         }
 
@@ -650,7 +654,7 @@ private const val SPLASH_MAX_DURATION = 5000 // ms
 private const val SPLASH_EXIT_ANIM_DURATION = 400L // ms
 
 /** Mihon's own update screen (download, then install) for a Mihon Together build from the website. */
-private fun togetherUpdateScreen(context: Context, release: mihon.feature.update.TogetherRelease) = NewUpdateScreen(
+internal fun togetherUpdateScreen(context: Context, release: mihon.feature.update.TogetherRelease) = NewUpdateScreen(
     versionName = release.version.ifBlank { release.build.toString() },
     changelogInfo = release.notes,
     releaseLink = release.pageUrl,

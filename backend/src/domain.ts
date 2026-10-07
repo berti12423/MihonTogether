@@ -96,6 +96,22 @@ const STATS_TTL = 8 * 86_400_000;
  * level on the global ranking.
  */
 export const XP = { chapter: 10, together: 5, streakDay: 5, streakMaxDays: 7, dailyCap: 1_000 } as const;
+/**
+ * Double XP (Berti, 2026-10-07): every Friday and Saturday in Israel time (Asia/Jerusalem, so it follows daylight
+ * saving) and during events ([start, end) in epoch ms; the 1.0 launch week first, midnight to midnight Israel time).
+ * Reading XP and the daily cap double; challenge and recruit XP don't.
+ */
+export const DOUBLE_XP = {
+  timeZone: "Asia/Jerusalem",
+  weekdays: ["Fri", "Sat"] as readonly string[],
+  // 7 Oct 2026 00:00 to 14 Oct 2026 00:00 Israel time (IDT, UTC+3).
+  events: [{ id: "launch_1_0", start: Date.UTC(2026, 9, 6, 21), end: Date.UTC(2026, 9, 13, 21) }] as ReadonlyArray<{ id: string; start: number; end: number }>,
+};
+const doubleXpWeekday = new Intl.DateTimeFormat("en-US", { timeZone: DOUBLE_XP.timeZone, weekday: "short" });
+export function xpMultiplier(now: number): number {
+  const weekend = DOUBLE_XP.weekdays.includes(doubleXpWeekday.format(now));
+  return weekend || DOUBLE_XP.events.some((event) => now >= event.start && now < event.end) ? 2 : 1;
+}
 /** Total XP needed to reach [level] (level 1 at 0): 50, 150, 300, 500, ... */
 export function xpForLevel(level: number): number { return 25 * level * (level - 1); }
 export function levelFor(total: number): number {
@@ -130,6 +146,40 @@ export const RECRUIT = { chapters: 5, xp: 50, monthlyCap: 10 } as const;
 const XP_CARRIED = ["recruits", "recruitMonth", "recruitMonthCount", "recruitedAt", "invitePending"] as const;
 /** Streak freezes: one earned every 7 streak days, at most this many held; each covers one missed day. */
 export const MAX_FREEZES = 2;
+/**
+ * Monthly challenges (UTC calendar month): the same three for everyone, picked from [CHALLENGE_ROTATION] by the
+ * month. Progress lives in `xp/{uid}.month` ({id: "yyyy-mm", chapters, days, together, streak, bestDay, xp}), reset
+ * when the month changes: `streak` is the longest streak reached this month, `bestDay` the most chapters in one UTC
+ * day this month, `xp` the reading XP earned this month (challenge XP excluded). A completed challenge gives
+ * [CHALLENGE_XP] once (outside the daily cap and the weekly XP) and is stamped in `challenges: {"yyyy-mm": [ids]}`;
+ * all three in a month add the `season_yyyy_mm` badge.
+ */
+export const CHALLENGE_XP = 100;
+export type MonthField = "chapters" | "days" | "together" | "streak" | "bestDay" | "xp";
+export const CHALLENGES: ReadonlyArray<{ id: string; field: MonthField; min: number }> = [
+  { id: "chapters_100", field: "chapters", min: 100 }, { id: "chapters_200", field: "chapters", min: 200 },
+  { id: "days_15", field: "days", min: 15 }, { id: "days_20", field: "days", min: 20 },
+  { id: "together_5", field: "together", min: 5 }, { id: "together_10", field: "together", min: 10 },
+  { id: "streak_7", field: "streak", min: 7 }, { id: "streak_14", field: "streak", min: 14 },
+  { id: "binge_15", field: "bestDay", min: 15 }, { id: "xp_2000", field: "xp", min: 2000 },
+];
+/** January..December: each month's three challenge IDs. */
+export const CHALLENGE_ROTATION: ReadonlyArray<readonly [string, string, string]> = [
+  ["chapters_100", "days_15", "streak_7"], ["chapters_200", "together_5", "binge_15"],
+  ["days_20", "together_10", "xp_2000"], ["chapters_100", "streak_14", "together_5"],
+  ["days_15", "binge_15", "xp_2000"], ["chapters_200", "days_20", "together_10"],
+  ["chapters_100", "together_5", "streak_14"], ["days_20", "streak_7", "xp_2000"],
+  ["chapters_200", "binge_15", "together_10"], ["chapters_100", "days_20", "together_10"],
+  ["days_15", "streak_14", "xp_2000"], ["chapters_200", "together_5", "streak_7"],
+];
+/** The UTC calendar month of [now], "yyyy-mm". */
+export function monthOf(now: number): string { return new Date(now).toISOString().slice(0, 7); }
+/** The three challenges of [month] ("yyyy-mm"). */
+export function challengesFor(month: string): Array<{ id: string; field: MonthField; min: number }> {
+  return CHALLENGE_ROTATION[Number(month.slice(5, 7)) - 1]!.map((id) => CHALLENGES.find((c) => c.id === id)!);
+}
+/** The badge for finishing all of [month]'s challenges: "season_yyyy_mm". */
+export function seasonBadge(month: string): string { return `season_${month.replace("-", "_")}`; }
 /** The UTC Monday that starts [now]'s week, yyyymmdd (weekly XP resets then). */
 export function weekOf(now: number): string {
   const daysSinceMonday = (new Date(now).getUTCDay() + 6) % 7;
@@ -814,7 +864,8 @@ export class SocialService {
         else xp.doc.invitePending = true;
       }
       tx.set(xpPath, xp.doc);
-      const reward = { gained: xp.gained, total: xp.doc.total, level: xp.level, leveledUp: xp.leveledUp, unlocked: xp.unlocked, freezeUsed: xp.freezeUsed };
+      const reward = { gained: xp.gained, total: xp.doc.total, level: xp.level, leveledUp: xp.leveledUp, unlocked: xp.unlocked, freezeUsed: xp.freezeUsed,
+        challenges: xp.challenges, challengeXp: xp.challengeXp, season: xp.season };
       if (!counted) return { day, counted: false, xp: reward };
       const stats = { schemaVersion: 1, day, generation: gen, chapters: (same ? Number(current.chapters) : 0) + 1,
         pages: (same ? Number(current.pages) : 0) + pages, streak, updatedAt: now, expiresAt: now + STATS_TTL };
@@ -843,26 +894,45 @@ export class SocialService {
     if (!sameDay && streak % 7 === 0) freezes = Math.min(MAX_FREEZES, freezes + 1);
     let gained: number = XP.chapter + (together ? XP.together : 0);
     if (!sameDay && streak > 1) gained += Math.min(streak, XP.streakMaxDays) * XP.streakDay;
-    gained = Math.max(0, Math.min(gained, XP.dailyCap - today));
-    const before = Number(previous?.total ?? 0), total = before + gained;
-    const level = levelFor(total);
+    const multiplier = xpMultiplier(now);
+    gained = Math.max(0, Math.min(gained * multiplier, XP.dailyCap * multiplier - today));
     const week = weekOf(now), sameWeek = previous?.week === week;
     const dayChapters = (sameDay ? Number(previous!.dayChapters ?? 0) : 0) + 1;
+    // Monthly challenge counters (an older doc without them starts the month from this chapter).
+    const monthId = monthOf(now), last = previous?.month as Data | undefined, sameMonth = last?.id === monthId;
+    const was = (field: MonthField) => (sameMonth ? Number(last![field] ?? 0) : 0);
+    const month: Record<MonthField, number> & { id: string } = {
+      id: monthId, chapters: was("chapters") + 1, days: was("days") + (sameDay && sameMonth ? 0 : 1),
+      together: was("together") + (together ? 1 : 0), streak: Math.max(was("streak"), streak),
+      bestDay: Math.max(was("bestDay"), dayChapters), xp: was("xp") + gained,
+    };
+    const stamps: Record<string, string[]> = { ...((previous?.challenges as Record<string, string[]> | undefined) ?? {}) };
+    const done = [...(stamps[monthId] ?? [])], current = challengesFor(monthId);
+    const completed = current.filter((c) => !done.includes(c.id) && month[c.field] >= c.min).map((c) => c.id);
+    if (completed.length) stamps[monthId] = [...done, ...completed];
+    const challengeXp = completed.length * CHALLENGE_XP;
+    const before = Number(previous?.total ?? 0), total = before + gained + challengeXp;
+    const level = levelFor(total);
     const doc: Data = {
       schemaVersion: 1, total, level, day, today: today + gained,
       chapters: Number(previous?.chapters ?? 0) + 1, together: Number(previous?.together ?? 0) + (together ? 1 : 0),
       bestStreak: Math.max(Number(previous?.bestStreak ?? 0), streak), streak, freezes,
       days: Number(previous?.days ?? 0) + (sameDay ? 0 : 1), dayChapters, bestDay: Math.max(Number(previous?.bestDay ?? 0), dayChapters),
       week, weekXp: (sameWeek ? Number(previous!.weekXp ?? 0) : 0) + gained,
+      // Chapters this week, for the weekly ranking (docs from before it start counting at their next chapter).
+      weekChapters: (sameWeek ? Number(previous!.weekChapters ?? 0) : 0) + 1,
       lastWeekXp: sameWeek ? Number(previous!.lastWeekXp ?? 0) : previous?.week === weekOf(now - 7 * DAY) ? Number(previous!.weekXp ?? 0) : 0,
-      createdAt: previous?.createdAt ?? now, updatedAt: now,
+      month, challenges: stamps, createdAt: previous?.createdAt ?? now, updatedAt: now,
     };
     for (const field of XP_CARRIED) if (previous?.[field] !== undefined) doc[field] = previous[field];
     const badges: Record<string, number> = { ...((previous?.badges as Record<string, number> | undefined) ?? {}) };
     const unlocked = BADGES.filter((badge) => !(badge.id in badges) && Number(doc[badge.field] ?? 0) >= badge.min).map((badge) => badge.id);
     for (const id of unlocked) badges[id] = now;
+    const allDone = completed.length > 0 && current.every((c) => stamps[monthId]!.includes(c.id));
+    const season = allDone && !(seasonBadge(monthId) in badges) ? seasonBadge(monthId) : null;
+    if (season) badges[season] = now;
     doc.badges = badges;
-    return { doc, gained, level, leveledUp: level > levelFor(before), unlocked, freezeUsed };
+    return { doc, gained: gained + challengeXp, level, leveledUp: level > levelFor(before), unlocked, freezeUsed, challenges: completed, challengeXp, season };
   }
   /**
    * Puts the actor on today's global ranking with only public fields (name, handle, accent, counts), keeping the

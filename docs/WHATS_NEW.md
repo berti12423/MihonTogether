@@ -2,6 +2,24 @@
 
 The first section is what the app shows in its update screen (through `apk.json` on the website). Newest first; write for readers, not developers.
 
+## October 7, 2026 (update 2)
+
+- "Check for updates" in More → About, and the update screen now reminds you once a day until you update.
+- The weekly ranking shows chapters read this week next to XP.
+- Change your avatar, banner, bio and accent colour on the website too (Account → Profile look).
+- Website: a friend's "Recent" now shows covers like the library, one per title with the latest chapter, instead of a long list.
+- Discord: your status no longer gets stuck. Turning Discord status off clears it at once, and a status left behind by a force-stop is cleared the next time you open the app.
+- New data meter in Friends → Me: see how much data reading uses versus Mihon Together's friends features.
+- Website: new Terms of use page, and the site is easier to find in search engines.
+
+## October 7, 2026: Mihon Together 1.0 🎉
+
+- Double XP launch week: every chapter gives double XP (and the daily cap doubles) from October 7 to 13 (Israel time).
+- Double XP weekends: every Friday and Saturday (Israel time) from now on.
+- My stats: a new page (Friends → Me → My stats) with your level, XP, streaks, days read, badges, a 12-week chart, your top titles this month and your reading time. Friends' profiles show their stats too.
+- Monthly challenges: three new challenges every month, the same for everyone (this month: read 100 chapters, read on 20 days, read 10 chapters together). Each one gives 100 XP, and finishing all three earns a badge for that month.
+- "How XP works": every rule in one place, from XP per chapter to the level curve.
+
 ## October 6, 2026 (update 3)
 
 - Nudges 👋: nudge a friend from their profile to keep their streak going. Friends whose streak is about to break get a 👋 button in your friends list. One nudge a day per friend; turn nudge notifications off in the notification settings.

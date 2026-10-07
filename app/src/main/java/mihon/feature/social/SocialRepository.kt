@@ -741,6 +741,9 @@ class SocialRepository(private val firebase: SocialFirebase, private val emulato
             leveledUp = xp["leveledUp"] == true,
             unlocked = (xp["unlocked"] as? List<*>).orEmpty().filterIsInstance<String>(),
             freezeUsed = (xp["freezeUsed"] as? Number)?.toInt() ?: 0,
+            challenges = (xp["challenges"] as? List<*>).orEmpty().filterIsInstance<String>(),
+            challengeXp = (xp["challengeXp"] as? Number)?.toInt() ?: 0,
+            season = xp["season"] as? String,
         )
     }
 
@@ -760,25 +763,7 @@ class SocialRepository(private val firebase: SocialFirebase, private val emulato
         return snapshot.data?.xp()
     }
 
-    private fun Map<String, Any?>.xp(): SocialXp {
-        val total = (this["total"] as? Number)?.toLong() ?: 0
-        return SocialXp(
-            total = total,
-            level = XpLevels.levelFor(total),
-            today = (this["today"] as? Number)?.toInt() ?: 0,
-            chapters = (this["chapters"] as? Number)?.toInt() ?: 0,
-            together = (this["together"] as? Number)?.toInt() ?: 0,
-            streak = (this["streak"] as? Number)?.toInt() ?: 0,
-            bestStreak = (this["bestStreak"] as? Number)?.toInt() ?: 0,
-            freezes = (this["freezes"] as? Number)?.toInt() ?: 0,
-            badges = (this["badges"] as? Map<*, *>).orEmpty().mapNotNull { (id, at) ->
-                (id as? String)?.let { it to ((at as? Number)?.toLong() ?: 0L) }
-            }.toMap(),
-            week = this["week"] as? String ?: "",
-            weekXp = (this["weekXp"] as? Number)?.toInt() ?: 0,
-            day = this["day"] as? String ?: "",
-        )
-    }
+    private fun Map<String, Any?>.xp(): SocialXp = parseXp(this)
 
     private suspend fun groupChat(
         action: String,

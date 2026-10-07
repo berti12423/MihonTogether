@@ -36,6 +36,7 @@ import eu.kanade.tachiyomi.util.system.isFossBuildType
 import eu.kanade.tachiyomi.util.system.isNightlyBuildType
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.updaterEnabled
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -114,6 +115,47 @@ object AboutScreen : Screen() {
                                 ?.let { uriHandler.openUri(it) }
                         },
                     )
+                }
+
+                // Mihon Together builds from the website: check by hand (the app also checks on start).
+                if (mihon.feature.update.TogetherUpdates.baseUrl != null) {
+                    item {
+                        TextPreferenceWidget(
+                            title = stringResource(MR.strings.check_for_updates),
+                            widget = {
+                                AnimatedVisibility(visible = isCheckingUpdates) {
+                                    CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                                }
+                            },
+                            onPreferenceClick = {
+                                if (!isCheckingUpdates) {
+                                    scope.launch {
+                                        isCheckingUpdates = true
+                                        try {
+                                            val release = withIOContext {
+                                                mihon.feature.update.TogetherUpdates.checkNow(
+                                                    context.appGraph.networkHelper,
+                                                )
+                                            }
+                                            if (release != null) {
+                                                navigator.push(
+                                                    eu.kanade.tachiyomi.ui.main.togetherUpdateScreen(context, release),
+                                                )
+                                            } else {
+                                                context.toast(MR.strings.update_check_no_new_updates)
+                                            }
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            context.toast(e.message)
+                                        } finally {
+                                            isCheckingUpdates = false
+                                        }
+                                    }
+                                }
+                            },
+                        )
+                    }
                 }
 
                 if (updaterEnabled) {

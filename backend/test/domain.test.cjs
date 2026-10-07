@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { SocialService, digest, pairId, DomainError, FEED_SLOTS, FEED_TTL, ROOM_MESSAGE_SLOTS, DAILY_LIMITS, statsDay, LEADERBOARD_SIZE, XP, xpForLevel, levelFor, GROUP_MAX_MEMBERS, weekOf, isReactionEmoji, REACTIONS_PER_MINUTE, RECRUIT } = require('../lib/domain.js');
+const { SocialService, digest, pairId, DomainError, FEED_SLOTS, FEED_TTL, ROOM_MESSAGE_SLOTS, DAILY_LIMITS, statsDay, LEADERBOARD_SIZE, XP, xpForLevel, levelFor, MAX_FREEZES, CHALLENGE_XP, CHALLENGES, CHALLENGE_ROTATION, monthOf, challengesFor, seasonBadge, GROUP_MAX_MEMBERS, weekOf, isReactionEmoji, REACTIONS_PER_MINUTE, RECRUIT, DOUBLE_XP, xpMultiplier } = require('../lib/domain.js');
 
 class MemoryStore {
   docs = new Map();
@@ -566,7 +566,7 @@ test('XP: chapters, reading together and streak bonus, daily cap, levels, privat
   assert.deepEqual([1, 2, 3, 4, 5].map(xpForLevel), [0, 50, 150, 300, 500]);
   assert.deepEqual([0, 49, 50, 149, 150, 10_000].map(levelFor), [1, 1, 2, 2, 3, 20]);
   const first = await f.call('socialRecordChapter', 'alice', chapter({ generation: 1 }));
-  assert.deepEqual(first.xp, { gained: 10, total: 10, level: 1, leveledUp: false, unlocked: ['first_chapter'], freezeUsed: 0 });
+  assert.deepEqual(first.xp, { gained: 10, total: 10, level: 1, leveledUp: false, unlocked: ['first_chapter'], freezeUsed: 0, challenges: [], challengeXp: 0, season: null });
   // Reading in a room with someone who joined adds the together bonus; a room id alone doesn't.
   const created = await f.call('socialRoomAction', 'alice', roomInput('create', { otherUid: 'bob', sessionId: op(), content: content(), position: position() }));
   f.advance(10_000);
@@ -582,6 +582,8 @@ test('XP: chapters, reading together and streak bonus, daily cap, levels, privat
   assert.equal(second.xp.total, 10 + 10 + 15 + 20); assert.equal(second.xp.level, 2); assert.equal(second.xp.leveledUp, true);
   const doc = f.store.docs.get('xp/alice');
   assert.equal(doc.chapters, 4); assert.equal(doc.together, 1); assert.equal(doc.bestStreak, 2);
+  // The fixture starts on a Sunday, so the next day starts a new week: the weekly counters restart.
+  assert.equal(doc.weekChapters, 1); assert.equal(doc.weekXp, second.xp.gained);
   // The ranking shows the level.
   assert.equal(f.store.docs.get(`leaderboards/${statsDay(f.now())}`).entries.alice.level, 2);
   // Daily cap.
@@ -627,6 +629,138 @@ test('achievements unlock once, weekly XP rolls over on Monday, streak freezes c
   for (let i = 0; i < 20; i++) { f.advance(10_000); await read(); }
   assert.ok(f.store.docs.get('xp/alice').badges.binge_20);
   assert.ok(f.store.docs.get('xp/alice').bestDay >= 20);
+});
+test('XP rules table: the app and web mirror exactly these values (see XpRulesTest.kt and web logic.test.mjs)', () => {
+  // If this fails, update the mirrors in the app's XpRules (SocialChallenges.kt) and web logic.ts together with this list.
+  assert.deepEqual({ ...XP }, { chapter: 10, together: 5, streakDay: 5, streakMaxDays: 7, dailyCap: 1000 });
+  assert.equal(MAX_FREEZES, 2); assert.equal(CHALLENGE_XP, 100);
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 10].map(xpForLevel), [0, 50, 150, 300, 500, 750, 2250]);
+  assert.deepEqual(CHALLENGES.map((c) => [c.id, c.field, c.min]), [
+    ['chapters_100', 'chapters', 100], ['chapters_200', 'chapters', 200], ['days_15', 'days', 15], ['days_20', 'days', 20],
+    ['together_5', 'together', 5], ['together_10', 'together', 10], ['streak_7', 'streak', 7], ['streak_14', 'streak', 14],
+    ['binge_15', 'bestDay', 15], ['xp_2000', 'xp', 2000]]);
+  assert.deepEqual(CHALLENGE_ROTATION.map((r) => [...r]), [
+    ['chapters_100', 'days_15', 'streak_7'], ['chapters_200', 'together_5', 'binge_15'], ['days_20', 'together_10', 'xp_2000'],
+    ['chapters_100', 'streak_14', 'together_5'], ['days_15', 'binge_15', 'xp_2000'], ['chapters_200', 'days_20', 'together_10'],
+    ['chapters_100', 'together_5', 'streak_14'], ['days_20', 'streak_7', 'xp_2000'], ['chapters_200', 'binge_15', 'together_10'],
+    ['chapters_100', 'days_20', 'together_10'], ['days_15', 'streak_14', 'xp_2000'], ['chapters_200', 'together_5', 'streak_7']]);
+  // Every rotation entry exists and uses three different counters.
+  for (const ids of CHALLENGE_ROTATION) {
+    const fields = ids.map((id) => CHALLENGES.find((c) => c.id === id).field);
+    assert.equal(new Set(fields).size, 3);
+  }
+  assert.equal(monthOf(Date.UTC(2026, 9, 31, 23, 59)), '2026-10'); assert.equal(monthOf(Date.UTC(2026, 10, 1)), '2026-11');
+  assert.deepEqual(challengesFor('2026-10').map((c) => c.id), ['chapters_100', 'days_20', 'together_10']);
+  assert.deepEqual(challengesFor('2027-01').map((c) => c.id), ['chapters_100', 'days_15', 'streak_7']);
+  assert.equal(seasonBadge('2026-10'), 'season_2026_10');
+});
+test('monthly challenges: counters per UTC month, roll over on the 1st, older docs start fresh', async () => {
+  const f = await fixture(); await befriend(f); const day = 86_400_000;
+  const read = async (fields = {}) => (await f.call('socialRecordChapter', 'alice', chapter({ generation: 1, ...fields }))).xp;
+  // An older xp doc without the new fields (read yesterday): the month starts from this chapter.
+  f.advance(Date.UTC(2030, 9, 30, 12) - f.now());
+  f.store.docs.set('xp/alice', { schemaVersion: 1, total: 400, level: 4, day: statsDay(f.now() - day), today: 30, chapters: 40, together: 2,
+    streak: 3, bestStreak: 3, freezes: 0, days: 10, dayChapters: 3, bestDay: 3, week: weekOf(f.now()), weekXp: 30, badges: { first_chapter: 1 },
+    createdAt: 1, updatedAt: 1 });
+  await read();
+  let doc = f.store.docs.get('xp/alice');
+  assert.deepEqual(doc.month, { id: '2030-10', chapters: 1, days: 1, together: 0, streak: 4, bestDay: 1, xp: XP.chapter + 4 * XP.streakDay });
+  assert.deepEqual(doc.challenges, {}); assert.equal(doc.chapters, 41);
+  // Same day: chapters and bestDay grow, days don't.
+  f.advance(10_000); await read();
+  doc = f.store.docs.get('xp/alice');
+  assert.equal(doc.month.chapters, 2); assert.equal(doc.month.days, 1); assert.equal(doc.month.bestDay, 2); assert.equal(doc.month.xp, 30 + 10);
+  // Together: only in a room with someone who joined.
+  const created = await f.call('socialRoomAction', 'alice', roomInput('create', { otherUid: 'bob', sessionId: op(), content: content(), position: position() }));
+  await f.call('socialRoomAction', 'bob', roomInput('join', { roomId: created.roomId }));
+  f.advance(10_000); await read({ roomId: created.roomId });
+  assert.equal(f.store.docs.get('xp/alice').month.together, 1);
+  // Next day: days and the month's streak grow; bestDay keeps the best day.
+  f.advance(day); await read();
+  doc = f.store.docs.get('xp/alice');
+  assert.equal(doc.month.days, 2); assert.equal(doc.month.streak, 5); assert.equal(doc.month.bestDay, 3); assert.equal(doc.month.chapters, 4);
+  // 1 November: everything starts over, the streak carries on (the month's streak is the streak reached in it).
+  f.advance(day); await read();
+  doc = f.store.docs.get('xp/alice');
+  assert.equal(monthOf(f.now()), '2030-11');
+  // 1 November 2030 is a Friday: double XP.
+  assert.deepEqual(doc.month, { id: '2030-11', chapters: 1, days: 1, together: 0, streak: 6, bestDay: 1, xp: (XP.chapter + 6 * XP.streakDay) * xpMultiplier(f.now()) });
+  assert.equal(doc.chapters, 45);
+});
+test('monthly challenges: each completes once for 100 XP, all three add the season badge, replays award nothing', async () => {
+  const f = await fixture(); await befriend(f); const day = 86_400_000;
+  const read = async (fields = {}) => (await f.call('socialRecordChapter', 'alice', chapter({ generation: 1, ...fields }))).xp;
+  f.advance(Date.UTC(2030, 9, 20, 12) - f.now()); // October: chapters_100, days_20, together_10
+  const seed = (month, extra = {}) => f.store.docs.set('xp/alice', { schemaVersion: 1, total: 1000, level: 6, day: statsDay(f.now() - day), today: 0,
+    chapters: 500, together: 50, streak: 1, bestStreak: 9, freezes: 0, days: 60, dayChapters: 1, bestDay: 9, week: weekOf(f.now()), weekXp: 0,
+    badges: {}, month, createdAt: 1, updatedAt: 1, ...extra });
+  // Chapters: the 100th chapter of the month completes it.
+  seed({ id: '2030-10', chapters: 98, days: 5, together: 0, streak: 1, bestDay: 9, xp: 900 });
+  let reward = await read();
+  assert.deepEqual(reward.challenges, []);
+  f.advance(10_000);
+  reward = await read();
+  assert.deepEqual(reward.challenges, ['chapters_100']); assert.equal(reward.challengeXp, CHALLENGE_XP);
+  assert.equal(reward.gained, XP.chapter + CHALLENGE_XP); assert.equal(reward.season, null);
+  let doc = f.store.docs.get('xp/alice');
+  assert.deepEqual(doc.challenges, { '2030-10': ['chapters_100'] });
+  // Challenge XP is outside the daily cap and the weekly XP.
+  assert.equal(doc.today, 2 * XP.chapter + 2 * XP.streakDay); assert.equal(doc.weekXp, doc.today); assert.equal(doc.month.xp, 900 + doc.today);
+  // Once only.
+  f.advance(10_000);
+  reward = await read();
+  assert.deepEqual(reward.challenges, []); assert.equal(reward.challengeXp, 0);
+  // Replaying an operation returns the stored result and changes nothing.
+  const replay = chapter({ generation: 1 });
+  f.advance(10_000);
+  const firstTry = await f.call('socialRecordChapter', 'alice', replay);
+  const totalAfter = f.store.docs.get('xp/alice').total;
+  f.advance(10_000);
+  assert.deepEqual(await f.call('socialRecordChapter', 'alice', replay), firstTry);
+  assert.equal(f.store.docs.get('xp/alice').total, totalAfter);
+  // Days: the 20th reading day.
+  seed({ id: '2030-10', chapters: 0, days: 19, together: 0, streak: 1, bestDay: 1, xp: 0 }, { challenges: { '2030-10': ['chapters_100'] } });
+  f.advance(10_000);
+  assert.deepEqual((await read()).challenges, ['days_20']);
+  // Together: the 10th chapter read together; with the other two done that completes the month.
+  const created = await f.call('socialRoomAction', 'alice', roomInput('create', { otherUid: 'bob', sessionId: op(), content: content(), position: position() }));
+  await f.call('socialRoomAction', 'bob', roomInput('join', { roomId: created.roomId }));
+  const before = f.store.docs.get('xp/alice');
+  f.store.docs.set('xp/alice', { ...before, month: { ...before.month, together: 9 } });
+  f.advance(10_000);
+  reward = await read({ roomId: created.roomId });
+  assert.deepEqual(reward.challenges, ['together_10']); assert.equal(reward.season, 'season_2030_10');
+  doc = f.store.docs.get('xp/alice');
+  assert.deepEqual(doc.challenges['2030-10'], ['chapters_100', 'days_20', 'together_10']);
+  assert.ok(doc.badges.season_2030_10);
+  f.advance(10_000);
+  reward = await read({ roomId: created.roomId });
+  assert.deepEqual(reward.challenges, []); assert.equal(reward.season, null);
+  // All three in one chapter: 300 XP and the season badge at once; level-ups count the challenge XP.
+  seed({ id: '2030-10', chapters: 99, days: 19, together: 9, streak: 1, bestDay: 1, xp: 0 }, { total: 700 });
+  f.advance(10_000);
+  reward = await read({ roomId: created.roomId });
+  assert.deepEqual(reward.challenges, ['chapters_100', 'days_20', 'together_10']); assert.equal(reward.challengeXp, 3 * CHALLENGE_XP);
+  assert.equal(reward.season, 'season_2030_10'); assert.equal(reward.total, 700 + XP.chapter + XP.together + 2 * XP.streakDay + 300);
+  assert.equal(reward.level, levelFor(reward.total)); assert.equal(reward.leveledUp, true);
+});
+test('monthly challenges: streak, binge and monthly XP challenges count within the month', async () => {
+  const f = await fixture(); const day = 86_400_000;
+  const read = async () => (await f.call('socialRecordChapter', 'alice', chapter({ generation: 1 }))).xp;
+  const seed = (month, extra = {}) => f.store.docs.set('xp/alice', { schemaVersion: 1, total: 5000, level: 14, day: statsDay(f.now() - day), today: 0,
+    chapters: 500, together: 0, streak: 6, bestStreak: 30, freezes: 0, days: 60, dayChapters: 1, bestDay: 30, week: weekOf(f.now()), weekXp: 0,
+    badges: {}, month, createdAt: 1, updatedAt: 1, ...extra });
+  // August: days_20, streak_7, xp_2000. Streak: reaching a 7-day streak this month (the lifetime best doesn't count).
+  f.advance(Date.UTC(2030, 7, 10, 12) - f.now());
+  seed({ id: '2030-08', chapters: 9, days: 9, together: 0, streak: 6, bestDay: 3, xp: 1980 });
+  assert.deepEqual((await read()).challenges, ['streak_7', 'xp_2000']); // streak 7, and 1980 + 10 + 35 XP
+  // May: days_15, binge_15, xp_2000. Binge: 15 chapters in one UTC day; April's counters don't carry over.
+  f.advance(Date.UTC(2031, 4, 10, 12) - f.now());
+  seed({ id: '2031-04', chapters: 300, days: 30, together: 0, streak: 1, bestDay: 40, xp: 5000 }, { streak: 1, day: statsDay(f.now() - 5 * day) });
+  const done = [];
+  for (let i = 0; i < 15; i++) { f.advance(10_000); done.push(...(await read()).challenges); }
+  assert.deepEqual(done, ['binge_15']);
+  assert.equal(f.store.docs.get('xp/alice').month.bestDay, 15);
 });
 test('room ready checks: ready and wait carry no text, keep a fallback for older apps, and are rate limited', async () => {
   const f = await fixture(); await befriend(f);
@@ -1628,4 +1762,28 @@ test('room positions stop with the lease and at the daily cap', async () => {
   const day = Math.floor(f2.now() / 86_400_000);
   f2.store.docs.set('quotas/bob', { schemaVersion: 1, day, counts: { roomPosition: 6_000 }, total: 6_000, updatedAt: f2.now() });
   await rejects(f2.call('socialRoomAction', 'bob', roomInput('position', { roomId: live, position: page(1) })), 'resource-exhausted');
+});
+
+test('double XP on Fridays and Saturdays in Israel time and during the 1.0 launch week, with a doubled daily cap', async () => {
+  const at = (iso) => Date.parse(iso);
+  assert.equal(DOUBLE_XP.timeZone, 'Asia/Jerusalem'); assert.deepEqual([...DOUBLE_XP.weekdays], ['Fri', 'Sat']);
+  assert.equal(xpMultiplier(at('2030-03-14T22:30:00Z')), 2); // Friday 00:30 in Israel, UTC+2 in March (still Thursday in UTC)
+  assert.equal(xpMultiplier(at('2030-03-16T22:30:00Z')), 1); // Sunday 00:30 in Israel (still Saturday in UTC)
+  assert.equal(xpMultiplier(at('2030-03-16T20:00:00Z')), 2); // Saturday 22:00 in Israel
+  assert.equal(xpMultiplier(at('2030-03-18T12:00:00Z')), 1); // Monday
+  assert.equal(xpMultiplier(at('2026-10-06T21:00:00Z')), 2); // launch week: 7 Oct 00:00 Israel (a Wednesday)
+  assert.equal(xpMultiplier(at('2026-10-06T20:59:00Z')), 1); // just before
+  assert.equal(xpMultiplier(at('2026-10-13T20:59:00Z')), 2); // 13 Oct 23:59 Israel (a Tuesday)
+  assert.equal(xpMultiplier(at('2026-10-13T21:00:00Z')), 1); // over
+  // The fixture's clock starts on a Sunday afternoon; five days later is a Friday.
+  const f = await fixture();
+  assert.equal(xpMultiplier(f.now()), 1);
+  assert.equal((await f.call('socialRecordChapter', 'alice', chapter({ generation: 1 }))).xp.gained, XP.chapter);
+  f.advance(5 * 86_400_000);
+  assert.equal(xpMultiplier(f.now()), 2);
+  const friday = await f.call('socialRecordChapter', 'alice', chapter({ generation: 1 }));
+  assert.equal(friday.xp.gained, XP.chapter * 2); // no streak bonus: the streak broke
+  // The daily cap doubles too.
+  for (let i = 0; i < 250; i++) { f.advance(10_000); await f.call('socialRecordChapter', 'alice', chapter({ generation: 1 })); }
+  assert.equal(f.store.docs.get('xp/alice').today, XP.dailyCap * 2);
 });

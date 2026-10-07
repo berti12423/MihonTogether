@@ -6,7 +6,7 @@ import {
 } from "firebase/firestore";
 import { getBytes, ref } from "firebase/storage";
 import { auth, db, functions, storage } from "./firebase";
-import { parseProgress, parseReview, Progress, Review, statsDay } from "./logic";
+import { parseProgress, parseReview, Progress, Review, statsDay, XpMonth } from "./logic";
 
 const uuid = () => crypto.randomUUID();
 async function call<T = Record<string, unknown>>(name: string, data: Record<string, unknown>): Promise<T> {
@@ -142,7 +142,9 @@ export function watchChatMessages(chatId: string, onMessages: (messages: ChatMes
 }
 // ---------- XP ----------
 export interface Xp { total: number; chapters: number; together: number; bestStreak: number; streak: number; freezes: number;
-  badges: Record<string, number>; week: string; weekXp: number }
+  badges: Record<string, number>; week: string; weekXp: number; weekChapters: number; days: number; bestDay: number;
+  /** Monthly challenge counters (null on older docs) and completed challenge IDs by "yyyy-mm". */
+  month: XpMonth | null; challenges: Record<string, string[]> }
 /** My XP, or a friend's while they share stats; null when missing or not readable. */
 export function watchXp(uid: string, onXp: (xp: Xp | null) => void): () => void {
   return onSnapshot(doc(db, `xp/${uid}`), (s) => {
@@ -154,7 +156,18 @@ export function watchXp(uid: string, onXp: (xp: Xp | null) => void): () => void 
 function parseXp(d: Record<string, unknown>): Xp {
   return { total: Number(d.total ?? 0), chapters: Number(d.chapters ?? 0), together: Number(d.together ?? 0), bestStreak: Number(d.bestStreak ?? 0),
     streak: Number(d.streak ?? 0), freezes: Number(d.freezes ?? 0), badges: (d.badges ?? {}) as Record<string, number>,
-    week: String(d.week ?? ""), weekXp: Number(d.weekXp ?? 0) };
+    week: String(d.week ?? ""), weekXp: Number(d.weekXp ?? 0), weekChapters: Number(d.weekChapters ?? 0), days: Number(d.days ?? 0), bestDay: Number(d.bestDay ?? 0),
+    month: parseMonth(d.month), challenges: parseChallenges(d.challenges) };
+}
+function parseMonth(raw: unknown): XpMonth | null {
+  if (!raw || typeof raw !== "object" || typeof (raw as { id?: unknown }).id !== "string") return null;
+  const m = raw as Record<string, unknown>, n = (key: string) => Number(m[key] ?? 0);
+  return { id: String(m.id), chapters: n("chapters"), days: n("days"), together: n("together"), streak: n("streak"), bestDay: n("bestDay"), xp: n("xp") };
+}
+function parseChallenges(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== "object") return {};
+  return Object.fromEntries(Object.entries(raw as Record<string, unknown>)
+    .map(([month, ids]) => [month, Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : []]));
 }
 /** A friend's XP (readable while they share stats), or null. */
 export async function loadXp(uid: string): Promise<Xp | null> {

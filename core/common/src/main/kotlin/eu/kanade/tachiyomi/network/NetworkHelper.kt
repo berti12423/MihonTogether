@@ -37,6 +37,8 @@ class NetworkHelper(
             )
             .addInterceptor(UncaughtExceptionInterceptor())
             .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
+            // Mihon Together: data meter (reading traffic vs the rest), see NetworkUsage.
+            .addNetworkInterceptor(NetworkUsage.interceptor.also { NetworkUsage.start() })
             .let(PlatformTls::apply)
 
         if (preferences.verboseLogging.get()) {

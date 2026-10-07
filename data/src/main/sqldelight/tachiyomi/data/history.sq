@@ -46,6 +46,12 @@ ON CONFLICT(chapter_id) DO UPDATE SET
     read_at = excluded.read_at,
     read_duration = read_duration + excluded.read_duration;
 
+getReadingLog:
+SELECT history.manga_id, manga.remote_title, history.read_at, history.read_duration
+FROM history
+JOIN manga ON manga.id = history.manga_id
+WHERE history.read_at > 0;
+
 getReadDuration:
 SELECT coalesce(sum(read_duration), 0)
 FROM history;

@@ -42,6 +42,27 @@ object SocialSdkDiscordPresence : DiscordPresence {
     private val recoveryAttempts = ArrayDeque<Long>()
     private var needsReset = false
 
+    // Remembers (on disk) that a status may still be showing on Discord, so a force-stop, crash or freeze that skipped
+    // the clear is undone on the next start (clearIfLingering). Discord keeps the last status until told otherwise.
+    @Volatile private var appContext: Context? = null
+
+    private fun markShowing(shown: Boolean) {
+        appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putBoolean(KEY_SHOWN, shown)?.apply()
+    }
+
+    /**
+     * Clears a status left on Discord by an earlier run (force-stop, crash, or Android freezing the app before the
+     * clear went out), and the one shown now when [force] (turning Discord status off). Loads the SDK only if needed.
+     */
+    fun clearIfLingering(activity: Activity, force: Boolean = false) {
+        if (!available) return
+        appContext = activity.applicationContext
+        val lingering = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_SHOWN, false)
+        if (!lingering && !force) return
+        attach(activity)
+        scope.launch { clearNow(force = true) }
+    }
+
     // Weak: the SDK keeps its own reference to the Activity; ours must never keep a destroyed one alive.
     @Volatile private var latestActivity: WeakReference<Activity>? = null
 
@@ -61,6 +82,7 @@ object SocialSdkDiscordPresence : DiscordPresence {
     fun attach(activity: Activity) {
         if (!available) return
         latestActivity = WeakReference(activity)
+        appContext = activity.applicationContext
         scope.launch {
             try {
                 val init = Class.forName("com.discord.socialsdk.DiscordSocialSdkInit") // loads libdiscord_partner_sdk
@@ -174,6 +196,7 @@ object SocialSdkDiscordPresence : DiscordPresence {
             watching = info.watching,
         )
         showing = true
+        markShowing(true)
         if (_status.value != DiscordStatus.Reconnecting) _status.value = DiscordStatus.Waiting
         keepPumping()
     }
@@ -193,14 +216,22 @@ object SocialSdkDiscordPresence : DiscordPresence {
         }
     }
 
-    /** Runs on the presence thread. */
-    private fun clearNow() {
+    /**
+     * Runs on the presence thread. Pumps the SDK right away for a moment, so the clear reaches Discord even if Android
+     * freezes the app just after the reader closes. [force]: clear even if this run never showed anything.
+     */
+    private suspend fun clearNow(force: Boolean = false) {
         pendingClear?.cancel()
         pendingClear = null
-        if (!initialized) return
+        if (!initialized || (!showing && !force)) return
         nativeClear()
         lastInfo = null
         showing = false
+        repeat(CLEAR_PUMPS) {
+            nativeRunCallbacks()?.let { result -> handleResult(result) }
+            delay(CLEAR_PUMP_GAP_MS)
+        }
+        markShowing(false)
         _status.value = DiscordStatus.Cleared
         keepPumping()
     }
@@ -268,6 +299,10 @@ object SocialSdkDiscordPresence : DiscordPresence {
     /** The service the Discord app exposes for Rich Presence over RPC (declared in the SDK's manifest queries). */
     private const val RPC_SERVICE_ACTION = "com.discord.socialsdk.rpc.IDiscordRpcService"
     private const val TEST_DURATION_MS = 60_000L
+    private const val PREFS = "mihon_discord"
+    private const val KEY_SHOWN = "status_maybe_showing"
+    private const val CLEAR_PUMPS = 10
+    private const val CLEAR_PUMP_GAP_MS = 50L
     private const val SLOW_PUMP_INTERVAL_MS = 2_000L
     private const val PUMP_AFTER_CHANGE_MS = 20_000L
 

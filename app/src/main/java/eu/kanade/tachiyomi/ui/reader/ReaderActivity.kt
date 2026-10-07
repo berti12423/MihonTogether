@@ -298,6 +298,12 @@ class ReaderActivity : BaseActivity() {
                         }
                     }
                     if (reward.freezeUsed > 0) add(stringResource(MR.strings.social_freeze_used, reward.freezeUsed))
+                    reward.challenges.mapNotNull(mihon.feature.social.Challenge::of).forEach {
+                        val name = stringResource(it.title, it.min)
+                        val xp = mihon.feature.social.XpRules.CHALLENGE_XP
+                        add(stringResource(MR.strings.challenge_completed, it.icon, name, xp))
+                    }
+                    if (reward.season != null) add(stringResource(MR.strings.challenge_all_done))
                 }
                 if (messages.isNotEmpty()) toast(messages.joinToString("\n"))
             }

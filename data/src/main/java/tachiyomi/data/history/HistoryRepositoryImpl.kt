@@ -15,6 +15,7 @@ import tachiyomi.data.subscribeToList
 import tachiyomi.domain.history.model.History
 import tachiyomi.domain.history.model.HistoryUpdate
 import tachiyomi.domain.history.model.HistoryWithRelations
+import tachiyomi.domain.history.model.ReadingLogEntry
 import tachiyomi.domain.history.repository.HistoryRepository
 
 @Inject
@@ -40,6 +41,14 @@ class HistoryRepositoryImpl(
         return database.historyQueries
             .getReadDuration()
             .awaitAsOne()
+    }
+
+    override suspend fun getReadingLog(): List<ReadingLogEntry> {
+        return database.historyQueries
+            .getReadingLog { mangaId, title, readAt, readDuration ->
+                ReadingLogEntry(mangaId, title, readAt?.time ?: 0L, readDuration)
+            }
+            .awaitAsList()
     }
 
     override suspend fun getHistoryByMangaId(mangaId: Long): List<History> {

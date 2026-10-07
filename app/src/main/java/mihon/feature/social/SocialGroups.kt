@@ -76,21 +76,42 @@ data class SocialXp(
     /** XP this week (UTC Monday start, yyyymmdd in [week]); stale weeks count as 0. */
     val week: String = "",
     val weekXp: Int = 0,
+    /** Chapters this week (same week as [weekXp]). */
+    val weekChapters: Int = 0,
     /** Last reading day (UTC yyyymmdd), empty when unknown. */
     val day: String = "",
+    /** Different UTC days with a chapter, ever. */
+    val days: Int = 0,
+    /** Most chapters in one UTC day, ever. */
+    val bestDay: Int = 0,
+    /** Monthly challenge counters (null on docs from before challenges, or before the first chapter). */
+    val month: XpMonth? = null,
+    /** Completed challenge IDs by month ("yyyy-mm"). */
+    val challenges: Map<String, List<String>> = emptyMap(),
 ) {
     fun weekXp(currentWeek: String) = if (week == currentWeek) weekXp else 0
+
+    fun weekChapters(currentWeek: String) = if (week == currentWeek) weekChapters else 0
 }
 
-/** What one recorded chapter earned, for the "level up" and "achievement" moments. */
+/** What one recorded chapter earned, for the "level up", "achievement" and "challenge" moments. */
 data class XpReward(
+    /** All XP this chapter added, challenge XP included. */
     val gained: Int,
     val total: Long,
     val level: Int,
     val leveledUp: Boolean,
     val unlocked: List<String> = emptyList(),
     val freezeUsed: Int = 0,
-)
+    /** Monthly challenges this chapter completed. */
+    val challenges: List<String> = emptyList(),
+    val challengeXp: Int = 0,
+    /** The `season_yyyy_mm` badge when this chapter completed all of the month's challenges. */
+    val season: String? = null,
+) {
+    /** Worth a message in the reader. */
+    val notable get() = leveledUp || unlocked.isNotEmpty() || freezeUsed > 0 || challenges.isNotEmpty()
+}
 
 /** The achievements the backend can unlock (backend `BADGES`), in display order. */
 enum class Badge(val id: String, val icon: String, val title: StringResource, val description: StringResource) {

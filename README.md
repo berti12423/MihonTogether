@@ -20,6 +20,18 @@ Get the APK from the [releases page](https://github.com/berti12423/MihonTogether
 
 *Requires Android 8.0 or higher.*
 
+## Screenshots
+
+<img src=".github/assets/screenshots/01-library.png" width="24%" alt="Library"> <img src=".github/assets/screenshots/02-title-friends-reviews.png" width="24%" alt="Friends who read this, with ratings and reviews"> <img src=".github/assets/screenshots/04-friends.png" width="24%" alt="Friends"> <img src=".github/assets/screenshots/05-ranking.png" width="24%" alt="Ranking podium">
+
+<img src=".github/assets/screenshots/11-chat-recommendation.png" width="24%" alt="Chat with a title recommendation"> <img src=".github/assets/screenshots/09-read-together-room.png" width="24%" alt="Read together room"> <img src=".github/assets/screenshots/10-reader-room-reactions.png" width="24%" alt="Reactions while reading together"> <img src=".github/assets/screenshots/08-level-achievements-challenges.png" width="24%" alt="Level, achievements and monthly challenges">
+
+**On the web**
+
+<img src=".github/assets/screenshots/13-web-friend-profile.png" width="32%" alt="Friend profile on the website"> <img src=".github/assets/screenshots/12-web-ranking.png" width="32%" alt="Ranking on the website"> <img src=".github/assets/screenshots/15-web-stats-challenges.png" width="32%" alt="Stats and challenges on the website">
+
+<sub>Screenshots use made-up demo accounts.</sub>
+
 </div>
 
 ## Features

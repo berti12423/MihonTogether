@@ -76,6 +76,15 @@ object SettingsDiscordScreen : SearchableSettings {
                             preference = preferences.enabled,
                             title = stringResource(MR.strings.pref_discord_enabled),
                             subtitle = stringResource(MR.strings.pref_discord_enabled_summary),
+                            // Turning it off also removes the status already on Discord (it stays there otherwise).
+                            onValueChanged = { on ->
+                                if (!on) {
+                                    context.findActivity()?.let {
+                                        SocialSdkDiscordPresence.clearIfLingering(it, force = true)
+                                    }
+                                }
+                                true
+                            },
                         ),
                     )
                     add(

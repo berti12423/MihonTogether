@@ -1,8 +1,8 @@
 # Mihon Together – privacy policy (DRAFT)
 
-> Draft, updated 2026-10-06 (review fixes: hiding a title deletes its review, a separate reading-progress switch, ranking pictures only while actually on the ranking; earlier the same day: ranking pictures and the all-time ranking; reading progress, ratings and reviews); 2026-10-03 to cover the global ranking, XP, private and group messages, push notifications, read-along requests, group rooms, "Let's read this" matches, reading-together recaps and translation. Not legal advice: fill in the contact email and have it reviewed before sharing the app widely. Served on the web at `/privacy.html` (see [web integration](WEB_INTEGRATION.md)).
+> Draft, updated 2026-10-06 (review fixes: hiding a title deletes its review, a separate reading-progress switch, ranking pictures only while actually on the ranking; earlier the same day: ranking pictures and the all-time ranking; reading progress, ratings and reviews); 2026-10-03 to cover the global ranking, XP, private and group messages, push notifications, read-along requests, group rooms, "Let's read this" matches, reading-together recaps and translation. Served on the web at `/privacy.html` (see [web integration](WEB_INTEGRATION.md)).
 
-**Operator:** Berti (Mihon Together) · **Contact:** _[email]_ · **Last updated:** 3 October 2026
+**Operator:** Berti (Mihon Together) · **Contact:** [GitHub issues](https://github.com/berti12423/MihonTogether/issues) (ask for a private channel for anything personal) · **Last updated:** 3 October 2026
 
 ## Short version
 
@@ -88,11 +88,11 @@ Data is stored with Google Firebase (Cloud Firestore, Realtime Database, Cloud F
 
 - Change what you share at any time in **More → Friends**. Turning a category off makes previously shared data unreadable immediately.
 - **Delete your account** in **More → Friends → Delete account**, or on the website under Account. This permanently removes your profile, handle, friendships, pending requests, shared lists, activity, history, stats, ranking entries, XP, ratings and reviews, rooms, private conversations, "Let's read this" wishes (including the matching entry on your friend's side), read-along requests, push tokens and usage counters, takes you out of every group chat (ownership passes to another member), and then deletes your sign-in account. Other people keep only their own records (for example their own block list), and group messages you sent stay with the group, under your display name, until they expire.
-- Contact _[email]_ for access or correction requests.
+- For access or correction requests, open an issue at [github.com/berti12423/MihonTogether/issues](https://github.com/berti12423/MihonTogether/issues) and ask for a private channel; don't post personal details publicly. You can also see and change most of your data in the app, and delete everything with **Delete account**.
 
 ## Children
 
-The service is not directed at children under 13 _[adjust per jurisdiction]_.
+The online features are not directed at children under 13, and you must be at least 13 (or older where the law requires it) to create an account.
 
 ## Changes
 

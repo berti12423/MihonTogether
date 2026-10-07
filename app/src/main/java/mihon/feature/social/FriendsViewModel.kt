@@ -288,8 +288,8 @@ class FriendsViewModel(
                                     val me = RankingEntry(
                                         account.uid,
                                         state.profile?.displayName ?: "",
-                                        0,
-                                        0,
+                                        chapters = xp?.weekChapters(xpWeek()) ?: 0,
+                                        pages = 0,
                                         me = true,
                                         level = xp?.level,
                                         weekXp = xp?.weekXp(xpWeek()) ?: 0,
@@ -1427,8 +1427,8 @@ class FriendsViewModel(
                 RankingEntry(
                     uid,
                     state.profile?.displayName ?: "",
-                    0,
-                    0,
+                    chapters = mine?.weekChapters(week) ?: 0,
+                    pages = 0,
                     me = true,
                     level = mine?.level,
                     weekXp = mine?.weekXp(week) ?: 0,
@@ -1441,8 +1441,8 @@ class FriendsViewModel(
                         RankingEntry(
                             friend.uid,
                             friend.displayName,
-                            0,
-                            0,
+                            chapters = xp.weekChapters(week),
+                            pages = 0,
                             me = false,
                             handle = friend.handle,
                             accent = friend.accent,

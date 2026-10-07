@@ -10,6 +10,7 @@ import {
   validHandle, weekOf, xpForLevel, QUICK_REACTIONS, isReactionEmoji, reactionChips,
 } from "./logic";
 import { joinableRooms, progressLabel, Review, stars, visibleQuote, withoutBlocked } from "./logic";
+import { challengeProgress, groupRecent, monthName, monthOf, seasons, XP_RULES } from "./logic";
 
 const ACCENTS = ["#5C6BC0", "#EF5350", "#FFA726", "#66BB6A", "#26C6DA", "#AB47BC", "#EC407A", "#8D6E63"];
 const SHARING_LABELS: Record<string, string> = {
@@ -187,11 +188,11 @@ async function loadRanking(): Promise<void> {
       friend: state.friends.has(e.uid), level: e.level, xp: e.xp ?? 0, avatar: e.avatar, banner: e.banner }))
     .sort((a, b) => b.xp - a.xp || b.chapters - a.chapters || a.name.localeCompare(b.name));
   const week = weekOf();
-  const weekly = [{ uid, name: state.profile?.displayName ?? "", chapters: 0, pages: 0, me: true, weekXp: state.xp?.week === week ? state.xp.weekXp : 0 }];
+  const weekly = [{ uid, name: state.profile?.displayName ?? "", chapters: state.xp?.week === week ? state.xp.weekChapters : 0, pages: 0, me: true, weekXp: state.xp?.week === week ? state.xp.weekXp : 0 }];
   const xps = await Promise.all(friends.map((friend) => social.loadXp(friend.uid)));
   for (const [i, friend] of friends.entries()) {
     const xp = xps[i];
-    if (xp) weekly.push({ uid: friend.uid, name: friend.displayName, chapters: 0, pages: 0, me: false, friend: true, level: levelFor(xp.total),
+    if (xp) weekly.push({ uid: friend.uid, name: friend.displayName, chapters: xp.week === week ? xp.weekChapters : 0, pages: 0, me: false, friend: true, level: levelFor(xp.total),
       weekXp: xp.week === week ? xp.weekXp : 0 } as RankingEntry & { weekXp: number });
   }
   state.weekly = weekly.filter((e) => e.weekXp > 0).sort((a, b) => b.weekXp - a.weekXp || a.name.localeCompare(b.name));
@@ -389,7 +390,7 @@ function gettingStartedCard(): HTMLElement | null {
   const list = gettingStarted({ profile, privacy, library: (state.librarySize ?? 0) > 0, friend: state.friends.size > 0 });
   if (list.complete) return null;
   const labels: Record<string, () => HTMLElement> = {
-    profile: () => h("span", {}, "Make your profile yours: avatar, banner or bio (in the app: More → Friends → Profile look)"),
+    profile: () => h("span", {}, "Make your profile yours: avatar, banner or bio (Account → Profile look, or in the app)"),
     privacy: () => h("span", {}, "Choose what friends can see in ", link("/privacy-settings", "Privacy")),
     library: () => h("span", {}, link("/download", "Install the app"), ", turn on Library sharing and share your library from the app"),
     friend: () => h("span", {}, "Add your first friend: send them your invite link"),
@@ -482,10 +483,7 @@ function friendView(uid: string): HTMLElement {
       link("/", "← Friends"),
       header(profile),
       h("p", { class: "accent" }, statusLine(uid)),
-      feed ? h("section", { class: "card" }, h("h3", {}, "Recent"), feed.length === 0 ? h("p", { class: "muted" }, "Nothing recent.") : null,
-        ...feed.map((item) => h("div", { class: "row between" },
-          h("span", {}, item.kind === "chapter_read" ? `Read ${item.chapterLabel ?? ""} of ${item.title}` : `Added ${item.title} to favorites`),
-          h("span", { class: "muted small" }, relativeTime(item.createdAt))))) : null,
+      feed ? recentCard(uid, feed) : null,
       h("div", { class: "row" },
         h("button", { onclick: () => navigate(`/chat/${uid}`) }, "Message"),
         h("button", { class: "secondary", disabled: state.busy || nudgedRecently(uid), onclick: () => run(async () => {
@@ -502,6 +500,28 @@ function friendView(uid: string): HTMLElement {
         h("button", { class: "danger secondary", onclick: () => confirm(`Block ${profile.displayName}?`) && run(async () => { await api.friendAction("block", uid); navigate("/"); }) }, "Block")));
   }).catch((error) => replace(container, link("/", "← Friends"), h("p", { class: "error", role: "status" },describe(error))));
   return container;
+}
+
+/**
+ * A friend's recent activity as a cover strip like the library: one tile per title (repeats collapsed), the latest
+ * chapter on the cover, and how many chapters and how long ago underneath.
+ */
+function recentCard(uid: string, feed: api.FeedItem[]): HTMLElement {
+  const groups = groupRecent(feed);
+  return h("section", { class: "card" }, h("h3", {}, "Recent"),
+    groups.length === 0 ? h("p", { class: "muted" }, "Nothing recent.") : null,
+    h("div", { class: "strip" }, ...groups.map((group) => {
+      const item = group.latest;
+      const badge = group.lastChapter ?? (group.favorited ? "♥ Favorite" : null);
+      const detail = [group.chapters > 1 ? `${group.chapters} chapters` : group.chapters === 1 ? "1 chapter" : group.favorited ? "Added to favorites" : "",
+        relativeTime(item.createdAt)].filter(Boolean).join(" · ");
+      return h("figure", { class: "tile", title: item.title },
+        coverImage(item.title, item.coverUrl, social.entryFallbacks(uid, { ...item, progress: null })),
+        badge ? h("span", { class: "progress" }, badge) : null,
+        group.favorited && group.lastChapter ? h("span", { class: "fav-badge", "aria-label": "Favorite" }, "♥") : null,
+        h("figcaption", {}, item.title),
+        h("div", { class: "muted small" }, detail));
+    })));
 }
 
 /** A cover tile; the owner's reading progress (when they share it: [progress]) sits on the cover. */
@@ -549,12 +569,69 @@ function privacyView(): HTMLElement {
     toggle("invisible", "Invisible mode", sharing.invisible, (s, on) => ({ ...s, invisible: on })));
 }
 
+/**
+ * Profile look, like the app's: avatar and banner (PNG/JPEG/WebP/GIF within the backend's size limits), bio and accent.
+ * Picked images upload first, then socialUpdateProfileStyle publishes everything at once.
+ */
+// The unsaved draft survives re-renders (the page redraws on every snapshot); cleared after saving.
+let lookDraft: { picked: { avatar: File | null; banner: File | null }; removed: { avatar: boolean; banner: boolean }; accent: number | null } =
+  { picked: { avatar: null, banner: null }, removed: { avatar: false, banner: false }, accent: null };
+function profileLookSection(profile: api.Profile): HTMLElement {
+  const { picked, removed } = lookDraft;
+  let accent = lookDraft.accent ?? profile.accent;
+  const status = h("p", { class: "muted small" });
+  const bio = field("profileBio", { value: profile.bio, maxlength: "160", placeholder: "Bio (one line)" });
+  const preview = (kind: "avatar" | "banner") => {
+    const box = h("div", { class: kind === "avatar" ? "look-avatar" : "look-banner" });
+    const media = removed[kind] ? null : profile[kind];
+    if (picked[kind]) box.append(h("img", { src: URL.createObjectURL(picked[kind]!), alt: "" }));
+    else if (media) api.mediaUrl(profile, kind).then((url) => { if (url && !picked[kind]) box.append(h("img", { src: url, alt: "" })); });
+    return box;
+  };
+  const avatarBox = h("div", {}), bannerBox = h("div", {});
+  const refresh = () => { replace(avatarBox, preview("avatar")); replace(bannerBox, preview("banner")); };
+  const chooser = (kind: "avatar" | "banner", label: string) => {
+    const input = h("input", { type: "file", accept: api.PROFILE_MEDIA_TYPES.join(","), "aria-label": label }) as HTMLInputElement;
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (!api.PROFILE_MEDIA_TYPES.includes(file.type)) { status.textContent = "Use a PNG, JPEG, WebP or GIF image."; input.value = ""; return; }
+      if (file.size > api.PROFILE_MEDIA_MAX[kind]) {
+        status.textContent = `That image is too big (the ${kind} can be up to ${api.PROFILE_MEDIA_MAX[kind] / 1048576} MB).`;
+        input.value = ""; return;
+      }
+      picked[kind] = file; removed[kind] = false; status.textContent = ""; refresh();
+    };
+    return h("div", { class: "row" }, h("label", { class: "button secondary" }, label, input),
+      h("button", { class: "secondary", onclick: () => { picked[kind] = null; removed[kind] = true; input.value = ""; refresh(); } }, "Remove"));
+  };
+  const swatches = h("div", { class: "row", role: "radiogroup", "aria-label": "Accent colour" });
+  const drawSwatches = () => replace(swatches, ...ACCENTS.map((color, index) => h("button", {
+    class: index === accent ? "swatch on" : "swatch", style: `background:${color}`, role: "radio", "aria-checked": String(index === accent),
+    "aria-label": `Accent ${index + 1}`, onclick: () => { accent = index; lookDraft.accent = index; drawSwatches(); },
+  })));
+  drawSwatches(); refresh();
+  const save = () => run(async () => {
+    const action = (kind: "avatar" | "banner"): api.MediaAction => (picked[kind] ? "set" : removed[kind] ? "remove" : "keep");
+    for (const kind of ["avatar", "banner"] as const) if (picked[kind]) await api.uploadProfileMedia(kind, picked[kind]!);
+    state.profile = await api.updateProfileStyle(bio.value.replace(/[\r\n]+/g, " ").trim(), accent, action("avatar"), action("banner"));
+    lookDraft = { picked: { avatar: null, banner: null }, removed: { avatar: false, banner: false }, accent: null };
+  }, "Profile saved.");
+  return h("section", { class: "card" }, h("h3", {}, "Profile look"),
+    h("p", { class: "muted small" }, "Shown to your friends (and to everyone on the global ranking, unless you turn that off in Privacy)."),
+    h("strong", {}, "Banner"), bannerBox, chooser("banner", "Choose banner"),
+    h("strong", {}, "Avatar"), avatarBox, chooser("avatar", "Choose avatar"),
+    h("strong", {}, "Bio"), bio,
+    h("strong", {}, "Accent colour"), swatches,
+    h("div", { class: "row" }, h("button", { disabled: state.busy, onclick: save }, "Save")), status);
+}
+
 function accountView(): HTMLElement {
   const password = field("deletePassword", { type: "password", placeholder: "Password", autocomplete: "current-password" });
   const confirmation = field("deleteConfirm", { placeholder: "Type DELETE to confirm" });
   return h("div", {},
     state.profile ? header(state.profile) : null,
-    h("p", { class: "muted small" }, "Change your avatar, banner, bio and accent colour in the app (More → Friends → Profile look)."),
+    state.profile ? profileLookSection(state.profile) : null,
     h("section", { class: "card" }, h("h3", {}, "Account"), h("p", {}, state.user?.email ?? ""),
       h("button", { class: "secondary", onclick: () => signOut(api.authInstance()) }, "Sign out")),
     h("section", { class: "card" }, h("h3", {}, "Browser notifications"), notificationControls(false)),
@@ -622,7 +699,7 @@ function rankingCard(): HTMLElement {
     allTime ? state.allTime : weekly ? state.weekly : global ? state.board : state.ranking;
   const card = state.card as (RankingEntry & { xp?: number }) | null;
   const score = (entry: RankingEntry & { weekXp?: number; xp?: number }) =>
-    weekly ? `${entry.weekXp ?? 0} XP` : allTime ? `${entry.xp ?? 0} XP · ${entry.chapters} ch.` : `${entry.chapters} ch.`;
+    weekly ? `${entry.weekXp ?? 0} XP · ${entry.chapters} ch.` : allTime ? `${entry.xp ?? 0} XP · ${entry.chapters} ch.` : `${entry.chapters} ch.`;
   const open = (entry: RankingEntry) => {
     if (entry.me) return;
     if (entry.friend || state.friends.has(entry.uid)) navigate(`/friend/${entry.uid}`);
@@ -1158,8 +1235,10 @@ function statsView(): HTMLElement {
       h("div", { class: "stats-grid" },
         counter(total, "total XP"), counter(xp?.chapters ?? 0, "chapters"), counter(xp?.together ?? 0, "read together"),
         counter(xp?.streak ?? 0, "day streak"), counter(xp?.bestStreak ?? 0, "best streak"), counter(xp?.freezes ?? 0, "streak freezes"),
-        counter(xp && xp.week === weekOf() ? xp.weekXp : 0, "XP this week")),
+        counter(xp && xp.week === weekOf() ? xp.weekXp : 0, "XP this week"), counter(xp?.days ?? 0, "days read"),
+        counter(xp?.bestDay ?? 0, "best day (chapters)")),
       h("button", { disabled: !xp, onclick: () => shareStats().catch((error) => { state.message = { text: describe(error), error: true }; render(); }) }, "Share my stats")),
+    challengesCard(xp),
     h("section", { class: "card" }, h("h3", {}, "Last 8 days"),
       records === null ? h("p", { class: "muted" }, "Loading…") : h("ul", { class: "bars", "aria-label": "Chapters read per day, last 8 days (UTC)" },
         ...days.map((d) => {
@@ -1177,7 +1256,41 @@ function statsView(): HTMLElement {
           h("span", { class: "badge-icon", "aria-hidden": "true" }, icon),
           h("div", {}, h("strong", {}, name), h("div", { class: "small" }, how),
             h("div", { class: "muted small" }, at ? `Unlocked ${new Date(Number(at)).toLocaleDateString()}` : "Locked")));
-      }))));
+      }),
+      ...seasons(xp?.badges ?? {}).map(({ month, at }) => h("li", {},
+        h("span", { class: "badge-icon", "aria-hidden": "true" }, "🏆"),
+        h("div", {}, h("strong", {}, `${monthName(month)} — all challenges`),
+          h("div", { class: "muted small" }, `Unlocked ${new Date(at).toLocaleDateString()}`)))))),
+    howXpWorks());
+}
+
+/** This month's three challenges (UTC month) with progress bars, like the app. */
+function challengesCard(xp: social.Xp | null): HTMLElement {
+  const month = monthOf(), items = challengeProgress(xp, month);
+  return h("section", { class: "card" }, h("h3", {}, `${monthName(month)} challenges`),
+    h("ul", { class: "achievements" }, ...items.map(({ challenge, value, done }) => h("li", { class: done ? "" : "locked" },
+      h("span", { class: "badge-icon", "aria-hidden": "true" }, challenge.icon),
+      h("div", { class: "grow" }, h("strong", {}, challenge.label),
+        h("progress", { max: String(challenge.min), value: String(Math.min(value, challenge.min)), "aria-label": `${challenge.label}: ${value} of ${challenge.min}` }),
+        h("div", { class: "muted small" }, done ? "Done" : `${value} / ${challenge.min}`))))),
+    h("p", { class: "muted small" }, items.every((i) => i.done) ? "🏆 All of this month's challenges done!"
+      : `+${XP_RULES.challengeXp} XP for each. Finish all three for a season badge. New challenges on the 1st (UTC).`));
+}
+
+/** "How XP works": the backend's rules, from XP_RULES (kept equal to domain.ts by tests). */
+function howXpWorks(): HTMLElement {
+  const r = XP_RULES;
+  return h("section", { class: "card" }, h("details", {}, h("summary", {}, "How XP works"),
+    h("ul", {},
+      h("li", {}, `Every finished chapter: ${r.chapter} XP.`),
+      h("li", {}, `Reading together in a room with a friend: +${r.together} XP per chapter.`),
+      h("li", {}, `First chapter of the day: +${r.streakDay} XP for each streak day, counting up to ${r.streakMaxDays} days (at most +${r.streakDay * r.streakMaxDays}).`),
+      h("li", {}, `Reading XP is capped at ${r.dailyCap} a day (UTC).`),
+      h("li", {}, "Double XP every Friday and Saturday (Israel time) and during events: reading XP and the daily cap double."),
+      h("li", {}, `Streak freezes: you earn one every ${r.freezeEveryDays} streak days and can hold ${r.maxFreezes}. Each one covers a missed day.`),
+      h("li", {}, `Monthly challenges: +${r.challengeXp} XP each, on top of the daily cap.`)),
+    h("p", { class: "small" }, "Total XP for each level: " + [2, 3, 5, 10, 15, 25, 40].map((l) => `Lv ${l}: ${xpForLevel(l)} (${levelTitle(l)})`).join(", ") + "."),
+    h("p", { class: "muted small" }, "XP counts outside incognito and invisible mode. Friends see your stats while you share them.")));
 }
 
 /** A shareable PNG of my stats, drawn on a canvas (text only: cross-origin covers would taint it). */
@@ -1232,6 +1345,7 @@ async function shareStats(): Promise<void> {
 /** Public download page: the Android app, how to install it, and its checksum. */
 interface PatchNotes { title: string; items: string[] }
 /** Loaded once per visit: the page redraws often, and refetching made it flicker. */
+const GITHUB_URL = "https://github.com/berti12423/MihonTogether";
 let downloadInfo: Promise<{ file: string; mb: number; sha256: string; built: string; version?: string; url?: string } | null> | null = null;
 /** The APK link: the GitHub release asset when apk.json names one (only that host), else this site's copy. */
 function apkHref(info: { file: string; url?: string }): string {
@@ -1319,8 +1433,12 @@ const layout = {
   // A persistent live region, so screen readers announce notices and errors as they appear.
   notice: h("div", { role: "status", "aria-live": "polite" }),
   body: h("main", { class: "body" }),
-  footer: h("footer", { class: "credit" }, "Mihon Together · made by Berti · based on ", h("a", { href: "https://mihon.app", rel: "noopener" }, "Mihon"),
-    " (Apache 2.0) · ", h("a", { href: "/download" }, "Download"), " · ", link("/patch-notes", "Patch notes"), " · ", h("a", { href: "/privacy.html" }, "Privacy")),
+  footer: h("footer", { class: "credit" },
+    h("div", {}, "Mihon Together · made by Berti · open source, based on ", h("a", { href: "https://github.com/mihonapp/mihon", rel: "noopener" }, "Mihon"),
+      " (", h("a", { href: `${GITHUB_URL}/blob/main/LICENSE`, rel: "noopener" }, "Apache 2.0"), ")"),
+    h("div", {}, h("a", { href: "/download" }, "Download"), " · ", link("/patch-notes", "Patch notes"), " · ", h("a", { href: "/privacy.html" }, "Privacy"),
+      " · ", h("a", { href: "/terms.html" }, "Terms"), " · ", h("a", { href: GITHUB_URL, rel: "noopener" }, "GitHub"), " · ", h("a", { href: `${GITHUB_URL}/issues`, rel: "noopener" }, "Contact")),
+    h("div", { class: "small" }, "Independent project, not affiliated with Mihon or Tachiyomi. Mihon Together hosts no manga or other reading content.")),
 };
 let headerKey = "", noticeKey = "";
 function renderNow(): void {
@@ -1337,6 +1455,8 @@ function renderNow(): void {
   if (page && page.path !== path) { page.stop(); page = null; }
   const signedIn = !!state.user;
   const unread = unreadMessages();
+  // The open-source repository, as an icon at the end of the menu (like mihon.app).
+  const githubLink = () => h("a", { class: "gh-link", href: GITHUB_URL, target: "_blank", rel: "noopener", title: "Mihon Together on GitHub", "aria-label": "Mihon Together on GitHub" });
   // The active page's link is marked for screen readers (and styled).
   const navLink = (target: string, label: string) => {
     const element = link(target, label);
@@ -1345,8 +1465,8 @@ function renderNow(): void {
   };
   const nav = signedIn ? h("nav", { "aria-label": "Main" }, navLink("/", "Friends"), navLink("/activity", "Activity"), navLink("/library", "Library"),
     navLink("/messages", unread ? `Messages (${unread})` : "Messages"), navLink("/privacy-settings", "Privacy"), navLink("/account", "Account"),
-    navLink("/patch-notes", "Patch notes"), h("a", { href: "/privacy.html" }, "Policy"))
-    : h("nav", { "aria-label": "Main" }, navLink("/download", "Download"), navLink("/patch-notes", "Patch notes"), h("a", { href: "/privacy.html" }, "Privacy policy"));
+    navLink("/patch-notes", "Patch notes"), h("a", { href: "/privacy.html" }, "Policy"), githubLink())
+    : h("nav", { "aria-label": "Main" }, navLink("/download", "Download"), navLink("/patch-notes", "Patch notes"), h("a", { href: "/privacy.html" }, "Privacy policy"), githubLink());
   const invite = inviteHandle(path);
   if (!invite) state.showSignIn = false;
   let body: HTMLElement;

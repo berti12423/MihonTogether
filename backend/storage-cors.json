@@ -1,8 +1,8 @@
 [
   {
     "origin": ["https://mihontogether.web.app", "https://mihontogether.firebaseapp.com"],
-    "method": ["GET", "HEAD"],
-    "responseHeader": ["Content-Type", "Content-Range", "Range"],
+    "method": ["GET", "HEAD", "POST", "PUT"],
+    "responseHeader": ["Content-Type", "Content-Range", "Range", "Authorization", "X-Goog-Upload-URL", "X-Goog-Upload-Status", "X-Goog-Upload-Command", "X-Goog-Upload-Protocol"],
     "maxAgeSeconds": 3600
   }
 ]
