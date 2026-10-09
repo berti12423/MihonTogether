@@ -71,6 +71,10 @@ object Notifications {
     const val ID_TOGETHER_UPDATE = -801
     const val ID_INCOGNITO_MODE = -701
 
+    /** Mihon Together: the browser is reading this phone's library (foreground service). */
+    const val CHANNEL_WEB_LIBRARY = "web_library_channel"
+    const val ID_WEB_LIBRARY = -901
+
     /**
      * Notification channel and ids used for extension updates.
      */
@@ -165,6 +169,10 @@ object Notifications {
                 },
                 buildNotificationChannel(CHANNEL_TOGETHER_UPDATE, IMPORTANCE_DEFAULT) {
                     setName(context.stringResource(MR.strings.together_update_channel))
+                },
+                buildNotificationChannel(CHANNEL_WEB_LIBRARY, IMPORTANCE_LOW) {
+                    setName(context.stringResource(MR.strings.web_library_channel))
+                    setShowBadge(false)
                 },
                 buildNotificationChannel(CHANNEL_INCOGNITO_MODE, IMPORTANCE_LOW) {
                     setName(context.stringResource(MR.strings.pref_incognito_mode))

@@ -5,7 +5,7 @@ import { ALL_TIME_BOARD, CHAT_TTL, pairId, ROOM_MESSAGE_SLOTS, statsDay } from "
 
 /** Owner-keyed subtrees removed wholesale (every document below them belongs to the user). */
 const OWNED_TREES = ["sharedLibraries", "sharedFavorites", "feeds", "hiddenTitles", "operations", "friendships", "blocks", "roomInvites",
-  "dailyStats", "chatIndex", "joinRequests", "groupIndex", "readWishIndex", "reviews"];
+  "dailyStats", "chatIndex", "joinRequests", "groupIndex", "readWishIndex", "reviews", "libraryHosts", "libraryLinks"];
 /** Owner-keyed single documents. */
 const OWNED_DOCS = ["profiles", "accounts", "sharingSettings", "activities", "presence", "lastSeen", "feedState", "quotas",
   "rateLimits", "requestLimits", "roomLimits", "devices", "joinRequestLimits", "xp", "groupLimits", "readWishLimits",

@@ -185,6 +185,32 @@ service cloud.firestore {
       // Readable exactly while the room itself is: participants, live friendship, open state, unexpired lease.
       allow read: if activeRoom(get(/databases/$(database)/documents/rooms/$(roomId)).data);
     }
+    // Web library signaling (docs/WEB_LIBRARY_PROTOCOL.md): the owner's phone and browser exchange one WebRTC offer and
+    // answer. Only the owner reads or writes; documents are short-lived (TTL on expiresAt) and carry no library data.
+    function validPhone(data) {
+      return data.keys().hasAll(['name','appBuild','protocol','updatedAt','expiresAt']) &&
+        data.keys().hasOnly(['name','appBuild','protocol','updatedAt','expiresAt']) &&
+        bounded(data.name,1,60) && data.appBuild is int && data.appBuild >= 0 && data.protocol is int && data.protocol >= 1 &&
+        data.updatedAt == request.time && data.expiresAt is timestamp && data.expiresAt > request.time &&
+        data.expiresAt <= request.time + duration.value(10, 'm');
+    }
+    match /libraryHosts/{uid}/phones/{deviceId} {
+      allow read, delete: if owner(uid);
+      allow create, update: if owner(uid) && deviceId.matches('^[A-Za-z0-9_-]{16,64}$') && validPhone(request.resource.data);
+    }
+    match /libraryLinks/{uid}/links/{linkId} {
+      allow read, delete: if owner(uid);
+      allow create: if owner(uid) && sessionId(linkId) &&
+        request.resource.data.keys().hasAll(['deviceId','offer','state','createdAt','expiresAt']) &&
+        request.resource.data.keys().hasOnly(['deviceId','offer','answer','state','createdAt','expiresAt']) &&
+        request.resource.data.deviceId.matches('^[A-Za-z0-9_-]{16,64}$') && bounded(request.resource.data.offer,1,20000) &&
+        request.resource.data.get('answer', null) == null && request.resource.data.state == 'offered' &&
+        request.resource.data.createdAt == request.time && request.resource.data.expiresAt is timestamp &&
+        request.resource.data.expiresAt > request.time && request.resource.data.expiresAt <= request.time + duration.value(15, 'm');
+      allow update: if owner(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answer','state']) &&
+        request.resource.data.state in ['answered','closed'] &&
+        (request.resource.data.get('answer', null) == null || bounded(request.resource.data.answer,1,20000));
+    }
     match /{document=**} { allow read, write: if false; }
   }
 }

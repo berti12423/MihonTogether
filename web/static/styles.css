@@ -187,3 +187,39 @@ label.button input[type="file"] { display: none; }
 .swatch { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 2px solid transparent; margin: 2px 4px 2px 0; }
 .swatch.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--card) inset; }
 .tile .fav-badge { position: absolute; top: 6px; left: 6px; background: rgba(0, 0, 0, .6); color: #ff6b8a; font-size: .8rem; padding: 1px 6px; border-radius: 6px; }
+
+/* My library: the phone's own library over a direct connection (src/weblibrary/views.ts). */
+.wl-status { padding: 8px 12px; margin: 8px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.wl-status button { margin: 0; }
+.dot.wl-dot { position: static; display: inline-block; vertical-align: middle; border-color: var(--card); }
+.wl-tabs { margin: 4px 0; }
+a.wl-tile { display: block; color: inherit; text-decoration: none; }
+a.wl-tile:focus-visible .cover, a.wl-tile:hover .cover { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wl-caption { display: -webkit-box; font-size: .85rem; line-height: 1.25; margin-top: 4px; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.wl-head { display: flex; gap: 16px; align-items: flex-start; }
+.wl-head h2 { margin: 0 0 4px; }
+.wl-head p { margin: 2px 0 6px; }
+.wl-cover { width: 120px; flex: none; }
+.chip.wl-genre { display: inline-block; font-size: .75rem; padding: 2px 10px; border-radius: 999px; }
+ul.wl-chapters { list-style: none; margin: 0; padding: 0; }
+ul.wl-chapters li { border-top: 1px solid var(--border); }
+ul.wl-chapters li:first-child { border-top: 0; }
+ul.wl-chapters a { display: flex; gap: 8px; align-items: center; padding: 9px 4px; color: inherit; text-decoration: none; }
+ul.wl-chapters a:hover { background: var(--bg); }
+ul.wl-chapters li.read a { color: var(--muted); }
+.wl-sub { display: block; }
+.wl-flag { font-size: .7rem; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; }
+/* The reader uses more width than the 720px column. */
+.wl-reader { width: min(100vw - 40px, 1100px); margin-left: calc(50% - min(50vw - 20px, 550px)); }
+.wl-toolbar { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 6px 4px; border-bottom: 1px solid var(--border); }
+.wl-toolbar .chip { margin: 0; padding: 3px 12px; font-size: .85rem; }
+.wl-indicator { white-space: nowrap; }
+.wl-paged { display: flex; justify-content: center; align-items: center; min-height: 70vh; cursor: pointer; user-select: none; margin-top: 8px; }
+.wl-paged img.wl-page { max-width: 100%; max-height: calc(100vh - 64px); object-fit: contain; display: block; }
+.wl-strip { display: flex; flex-direction: column; align-items: center; margin-top: 8px; }
+.wl-slot { width: 100%; max-width: 800px; min-height: 60vh; display: flex; align-items: center; justify-content: center; }
+.wl-slot:has(img) { min-height: 0; }
+.wl-strip img.wl-page { width: 100%; display: block; }
+.wl-end { max-width: 420px; margin: 24px auto; }
+.wl-missing { text-align: center; padding: 24px; }
+.wl-loading { padding: 40px; }

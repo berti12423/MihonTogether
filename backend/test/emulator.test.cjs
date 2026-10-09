@@ -14,7 +14,7 @@ const { initializeApp: initializeAdmin, deleteApp: deleteAdmin } = require('fire
 const { getFirestore: adminFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
 const { getDatabase: adminDatabase } = require('firebase-admin/database');
 const { getAuth: adminAuth } = require('firebase-admin/auth');
-const { digest, pairId, SocialService, statsDay } = require('../lib/domain.js');
+const { digest, pairId, SocialService, statsDay, xpMultiplier } = require('../lib/domain.js');
 const { createFirestoreStore } = require('../lib/firestore-store.js');
 const { closeExpiredRooms, clearExpiredGroupPreviews } = require('../lib/cleanup.js');
 
@@ -483,7 +483,7 @@ test('XP is the owner\'s, visible to friends only with stats sharing, and leaves
   const { a, b, c } = await fixture(); await befriend(a, b); await befriend(a, c);
   await share(a, { globalRanking: false });
   const result = await a.call('socialRecordChapter', { operationId: op(), generation: 2, pages: 10 });
-  assert.equal(result.counted, false); assert.equal(result.xp.total, 10);
+  assert.equal(result.counted, false); assert.equal(result.xp.total, 10 * xpMultiplier(Date.now())); // double XP on Fri/Sat and event weeks
   await assertSucceeds(getDocFromServer(doc(a.db, `xp/${a.uid}`)));
   await assertFails(getDocFromServer(doc(b.db, `xp/${a.uid}`)));
   await share(a, { stats: 'friends' }, 2);
@@ -736,4 +736,41 @@ test('open room cards: friends who see the activity read title and count only; m
   // Activity not shared: nothing is readable, not even absence.
   await share(a, { activity: 'private' }, card.generation + 1);
   await assertFails(getDocFromServer(doc(c.db, `openRooms/${a.uid}`)));
+});
+test('web library signaling is owner-only, shape-checked, short-lived and leaves with the account', async () => {
+  const { a, b } = await fixture();
+  const deviceId = 'phone_abcdefghij0123', inMinutes = (m) => ClientTimestamp.fromMillis(Date.now() + m * 60_000);
+  const phone = (db, uid = a.uid, fields = {}) => setDoc(doc(db, `libraryHosts/${uid}/phones/${deviceId}`),
+    { name: 'Galaxy A35', appBuild: 8300, protocol: 1, updatedAt: serverTimestamp(), expiresAt: inMinutes(3), ...fields });
+  await assertSucceeds(phone(a.db));
+  await assertSucceeds(phone(a.db));
+  await assertSucceeds(getDocs(query(collection(a.db, `libraryHosts/${a.uid}/phones`), where('expiresAt', '>', ClientTimestamp.now()))));
+  await assertFails(getDocs(collection(b.db, `libraryHosts/${a.uid}/phones`)));
+  await assertFails(phone(b.db));
+  await assertFails(phone(a.db, a.uid, { expiresAt: inMinutes(60) }));
+  await assertFails(phone(a.db, a.uid, { name: 'x'.repeat(61) }));
+  await assertFails(phone(a.db, a.uid, { library: ['nope'] }));
+  await assertFails(setDoc(doc(a.db, `libraryHosts/${a.uid}/phones/short`), { name: 'P', appBuild: 1, protocol: 1, updatedAt: serverTimestamp(), expiresAt: inMinutes(3) }));
+
+  const linkId = randomUUID(), linkPath = `libraryLinks/${a.uid}/links/${linkId}`;
+  const offer = (fields = {}) => ({ deviceId, offer: 'v=0 offer', state: 'offered', createdAt: serverTimestamp(), expiresAt: inMinutes(10), ...fields });
+  await assertFails(setDoc(doc(b.db, `libraryLinks/${a.uid}/links/${randomUUID()}`), offer()));
+  await assertFails(setDoc(doc(a.db, `libraryLinks/${a.uid}/links/${randomUUID()}`), offer({ offer: 'x'.repeat(20_001) })));
+  await assertFails(setDoc(doc(a.db, `libraryLinks/${a.uid}/links/${randomUUID()}`), offer({ state: 'answered', answer: 'v=0' })));
+  await assertFails(setDoc(doc(a.db, `libraryLinks/${a.uid}/links/${randomUUID()}`), offer({ expiresAt: inMinutes(60) })));
+  await assertFails(setDoc(doc(a.db, `libraryLinks/${a.uid}/links/not-a-uuid`), offer()));
+  await assertSucceeds(setDoc(doc(a.db, linkPath), offer()));
+  // The phone (same account) listens for offers and answers; nobody else sees or touches them.
+  await assertSucceeds(getDocs(query(collection(a.db, `libraryLinks/${a.uid}/links`), where('deviceId', '==', deviceId), where('state', '==', 'offered'))));
+  await assertFails(getDoc(doc(b.db, linkPath)));
+  await assertFails(updateDoc(doc(b.db, linkPath), { answer: 'v=0 evil', state: 'answered' }));
+  await assertFails(updateDoc(doc(a.db, linkPath), { offer: 'v=0 changed' }));
+  await assertFails(updateDoc(doc(a.db, linkPath), { answer: 'x'.repeat(20_001), state: 'answered' }));
+  await assertSucceeds(updateDoc(doc(a.db, linkPath), { answer: 'v=0 answer', state: 'answered' }));
+  await assertFails(updateDoc(doc(a.db, linkPath), { state: 'offered' }));
+  await assertSucceeds(updateDoc(doc(a.db, linkPath), { state: 'closed' }));
+  await assertFails(deleteDoc(doc(b.db, linkPath)));
+
+  assert.deepEqual(await a.call('socialDeleteAccount', { confirm: 'DELETE' }), { deleted: true });
+  for (const path of [`libraryHosts/${a.uid}/phones/${deviceId}`, linkPath]) assert.equal((await adminDb.doc(path).get()).exists, false, path);
 });

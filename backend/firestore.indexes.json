@@ -18,6 +18,8 @@
     { "collectionGroup": "messages", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
     { "collectionGroup": "users", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
     { "collectionGroup": "activities", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
-    { "collectionGroup": "days", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] }
+    { "collectionGroup": "days", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
+    { "collectionGroup": "phones", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] },
+    { "collectionGroup": "links", "fieldPath": "expiresAt", "ttl": true, "indexes": [ { "order": "ASCENDING", "queryScope": "COLLECTION" }, { "order": "DESCENDING", "queryScope": "COLLECTION" }, { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" } ] }
   ]
 }

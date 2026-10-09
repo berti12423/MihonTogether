@@ -1700,4 +1700,17 @@
     <string name="data_usage_social">Mihon Together (friends, chats, pictures, rooms): %1$s</string>
     <string name="data_usage_hint">Tap Reset, use the app for a while, and compare the two lines.</string>
     <string name="data_usage_reset">Reset</string>
+    <!-- Library on the web (2026-10-09, docs/WEB_LIBRARY_PROTOCOL.md) -->
+    <string name="web_library_setting">Library on the web</string>
+    <string name="web_library_setting_summary">Read your library in your browser while signed in to this account. The browser connects directly to this phone; nothing is uploaded.</string>
+    <string name="web_library_share">Share library with my browser</string>
+    <string name="web_library_share_hint">Keeps this phone available for 15 minutes. On your computer, open %1$s with the same account.</string>
+    <string name="web_library_available">Available for 15 minutes. Open %1$s on your computer.</string>
+    <string name="web_library_stop">Stop sharing</string>
+    <string name="web_library_connected">Your browser is reading your library.</string>
+    <string name="web_library_disconnect">Disconnect</string>
+    <string name="web_library_notification">Sharing your library with your browser</string>
+    <string name="web_library_notification_text">Only your browser, signed in to your account, can connect.</string>
+    <string name="web_library_channel">Library on the web</string>
+    <string name="web_library_vpn_hint">A VPN or AdGuard is on. If your browser fails to connect, exclude Mihon Together in it (in AdGuard: App management).</string>
 </resources>

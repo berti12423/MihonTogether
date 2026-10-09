@@ -785,6 +785,7 @@ private fun LazyListScope.meTab(
     item { SectionTitle(stringResource(MR.strings.social_privacy)) }
     item { Text(stringResource(MR.strings.social_share_summary)) }
     item { SharingControls(state.sharing, state.busy, onIntent) }
+    item { mihon.feature.weblibrary.WebLibraryCard() }
     ownTitles(state, onIntent)
     readWishes(state, onIntent, onReadTogether, onPick)
     if (state.blocks.isNotEmpty()) item { SectionTitle(stringResource(MR.strings.social_blocked)) }

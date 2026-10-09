@@ -17,8 +17,16 @@ await build({
   sourcemap: true,
   outfile: "dist/app.js",
   // Production config is injected at build time; local builds talk to the emulators.
-  define: { __FIREBASE_CONFIG__: JSON.stringify(process.env.MIHON_WEB_FIREBASE_CONFIG ?? "") },
+  // __DEV_TOOLS__: the demo phone for "My library" (src/weblibrary/dev-loopback.ts, fake-phone.ts), local builds only.
+  define: {
+    __FIREBASE_CONFIG__: JSON.stringify(process.env.MIHON_WEB_FIREBASE_CONFIG ?? ""),
+    __DEV_TOOLS__: JSON.stringify(!process.env.MIHON_WEB_FIREBASE_CONFIG),
+  },
 });
+// The demo phone must never reach the production site.
+if (process.env.MIHON_WEB_FIREBASE_CONFIG && readFileSync("dist/app.js", "utf8").includes("Demo phone")) {
+  throw new Error("The development demo phone ended up in a production bundle");
+}
 cpSync("static", "dist", { recursive: true });
 
 // Static legal pages from the docs (no app script): privacy policy and terms of use.

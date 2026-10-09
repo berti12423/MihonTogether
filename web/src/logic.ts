@@ -275,6 +275,8 @@ const ROUTES = [
   /^\/$/, /^\/add\/[a-z0-9_]{3,24}\/?$/, /^\/download$/, /^\/patch-notes$/, /^\/library$/, /^\/messages$/, /^\/activity$/, /^\/stats$/,
   /^\/privacy-settings$/, /^\/account$/, /^\/friend\/[^/]+$/, /^\/friend\/[^/]+\/(library|favorites)$/, /^\/chat\/[^/]+$/,
   /^\/group\/[^/]+$/, /^\/room\/[^/]+$/,
+  // My library (the phone's own library over a direct connection): list, title, reader.
+  /^\/my-library(\/[A-Za-z0-9_-]{1,64}){0,2}\/?$/,
 ];
 export function knownRoute(path: string): boolean {
   return ROUTES.some((route) => route.test(path));

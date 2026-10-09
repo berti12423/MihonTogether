@@ -136,6 +136,8 @@ interface AppGraph : ViewModelGraph {
     val socialPushRegistration: mihon.feature.social.SocialPushRegistration
     val socialProjectionGuard: SocialProjectionGuard
     val readingSessionStore: ReadingSessionStore
+    val webLibraryHost: mihon.feature.weblibrary.WebLibraryHost
+    val webLibraryPreferences: mihon.feature.weblibrary.WebLibraryPreferences
 
     @DependencyGraph.Factory
     fun interface Factory {

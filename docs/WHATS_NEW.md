@@ -2,6 +2,14 @@
 
 The first section is what the app shows in its update screen (through `apk.json` on the website). Newest first; write for readers, not developers.
 
+## October 9, 2026: My library on the website
+
+- **Read your phone's library on your computer:** open mihontogether.web.app → My library, signed in to the same account. Covers, chapters and a full reader (long strip or pages, right-to-left, arrow keys), and your progress is saved on the phone.
+- Pages go straight from your phone to your browser over an encrypted connection; nothing is uploaded to our servers. Works best on the same Wi-Fi, with the app open on the phone.
+- Friends → Me: "Library on the web" switch (on) and "Share library with my browser" to keep the phone available for 15 minutes.
+- Using AdGuard or a VPN on your phone? Exclude Mihon Together in it, or the browser can't reach the phone. The app tells you when this is needed.
+- On the website, "Library" is now called "Shared library" (what your friends see).
+
 ## October 7, 2026 (update 2)
 
 - "Check for updates" in More → About, and the update screen now reminds you once a day until you update.

@@ -51,6 +51,7 @@ Get the APK from the [releases page](https://github.com/berti12423/MihonTogether
 * **Translation:** translate speech bubbles in the reader, with your own Gemini key or free on-device translation.
 * **Discord status:** show what you're reading on your Discord profile (optional).
 * **Website:** your friends, chats, libraries and rankings at [mihontogether.web.app](https://mihontogether.web.app).
+* **My library on the web:** read your phone's library in your computer's browser. Pages go straight from the phone over an encrypted WebRTC link; nothing is uploaded.
 
 **Privacy:** local reading works signed out and offline. You choose what friends can see in Privacy, invisible mode hides everything, and nothing is shared beyond your friends except the optional global ranking. See the [privacy policy](docs/PRIVACY_POLICY.md).
 
@@ -62,6 +63,7 @@ See [BUILDING.md](BUILDING.md). The social features need a Firebase project; deb
 
 * [Social API (backend contract)](docs/SOCIAL_API.md)
 * [Read-together protocol](docs/READER_INTEGRATION.md)
+* [Web library protocol](docs/WEB_LIBRARY_PROTOCOL.md)
 * [Firebase setup](docs/FIREBASE_SETUP.md) and [production deploy](docs/PRODUCTION.md)
 * [Translation](docs/TRANSLATION_PLAN.md)
 * [What's new](docs/WHATS_NEW.md)

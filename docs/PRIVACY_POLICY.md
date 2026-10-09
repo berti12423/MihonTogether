@@ -2,7 +2,7 @@
 
 > Draft, updated 2026-10-06 (review fixes: hiding a title deletes its review, a separate reading-progress switch, ranking pictures only while actually on the ranking; earlier the same day: ranking pictures and the all-time ranking; reading progress, ratings and reviews); 2026-10-03 to cover the global ranking, XP, private and group messages, push notifications, read-along requests, group rooms, "Let's read this" matches, reading-together recaps and translation. Served on the web at `/privacy.html` (see [web integration](WEB_INTEGRATION.md)).
 
-**Operator:** Berti (Mihon Together) · **Contact:** [GitHub issues](https://github.com/berti12423/MihonTogether/issues) (ask for a private channel for anything personal) · **Last updated:** 3 October 2026
+**Operator:** Berti (Mihon Together) · **Contact:** [GitHub issues](https://github.com/berti12423/MihonTogether/issues) (ask for a private channel for anything personal) · **Last updated:** 9 October 2026
 
 ## Short version
 
@@ -73,6 +73,8 @@ If you turn on Discord status in the settings, the app tells the Discord app on 
 ## Website
 
 The website shows the same data as the app with the same rules. To show covers, your browser looks up titles on AniList's public API (graphql.anilist.co) and remembers the results in your browser for 30 days. The download page serves the app's installation file.
+
+**My library on the website.** When you open "My library" on the website, your browser connects directly to your own phone (signed in to the same account) over an encrypted WebRTC connection, and your library, covers and pages travel straight from the phone to the browser. They are not stored on our servers. To set up the connection, the phone and the browser exchange a few short technical messages through our database: your phone's name (for example "Galaxy A35"), the app's build number and the connection details (network addresses). Only you can read them, and they are deleted automatically within minutes (at most 15). During setup both sides ask Google's public STUN server (stun.l.google.com) for their public IP address, as every WebRTC connection does. Reading progress you make on the website is saved on your phone like reading in the app. You can turn this off in the app under Friends → Me ("Library on the web").
 
 ## Technical and abuse-prevention data
 

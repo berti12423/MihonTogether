@@ -251,6 +251,11 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+        <!-- Library on the web: keeps the phone serving the browser over WebRTC (docs/WEB_LIBRARY_PROTOCOL.md). -->
+        <service
+            android:name="mihon.feature.weblibrary.WebLibraryService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <!-- Reply / Accept actions on social notifications. -->
         <receiver
             android:name="mihon.feature.social.SocialNotificationReceiver"

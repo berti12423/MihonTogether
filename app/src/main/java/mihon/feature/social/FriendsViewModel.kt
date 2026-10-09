@@ -145,6 +145,7 @@ class FriendsViewModel(
     private val roomTitleImporter: RoomTitleImporter,
     private val getLibraryManga: tachiyomi.domain.manga.interactor.GetLibraryManga,
     private val friendReaders: FriendReaders,
+    private val webLibrary: mihon.feature.weblibrary.WebLibraryHost,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(FriendsState(enabled = repository.enabled))
     val state = mutableState.asStateFlow()
@@ -486,6 +487,8 @@ class FriendsViewModel(
         try {
             withContext(NonCancellable) {
                 repository.currentUid?.let { uid -> withTimeoutOrNull(3_000) { push.unregister(uid) } }
+                // The browser stops seeing this phone (its document is owner-only, so remove it while signed in).
+                webLibrary.beforeSignOut()
                 repository.stopPresenceBeforeSignOut()
                 withTimeoutOrNull(5_000) {
                     try {

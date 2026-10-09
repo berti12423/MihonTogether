@@ -320,6 +320,10 @@ dependencies {
     implementation(libs.mlkit.text.chinese)
     implementation(libs.mlkit.translate)
 
+    // Library on the web (docs/WEB_LIBRARY_PROTOCOL.md): WebRTC data channel to the user's browser. It ships its own
+    // keep rule for org.webrtc (JNI) and only INTERNET/ACCESS_NETWORK_STATE in its manifest.
+    implementation(libs.stream.webrtc)
+
     // Compose
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.foundation)

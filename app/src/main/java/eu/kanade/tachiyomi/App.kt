@@ -51,7 +51,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import logcat.AndroidLogcatLogger
@@ -176,6 +178,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                     }
                 }
             }
+            // Library on the web: publish while on screen, listen for the browser while the process lives. WebRTC
+            // itself loads only when a browser connects.
+            graph.webLibraryHost.start(
+                ProcessLifecycleOwner.get().lifecycle.currentStateFlow
+                    .map { it.isAtLeast(Lifecycle.State.STARTED) }
+                    .distinctUntilChanged(),
+            )
         }
 
         // Show notification to disable Incognito Mode when it's enabled

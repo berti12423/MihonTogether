@@ -11,6 +11,7 @@ import {
 } from "./logic";
 import { joinableRooms, progressLabel, Review, stars, visibleQuote, withoutBlocked } from "./logic";
 import { challengeProgress, groupRecent, monthName, monthOf, seasons, XP_RULES } from "./logic";
+import { initWebLibrary, leaveWebLibrary, myLibraryPage, resetWebLibrary } from "./weblibrary/views";
 
 const ACCENTS = ["#5C6BC0", "#EF5350", "#FFA726", "#66BB6A", "#26C6DA", "#AB47BC", "#EC407A", "#8D6E63"];
 const SHARING_LABELS: Record<string, string> = {
@@ -96,6 +97,7 @@ window.addEventListener("popstate", render);
 function link(path: string, label: string): HTMLElement {
   return h("a", { href: path, onclick: (event) => { event.preventDefault(); navigate(path); } }, label);
 }
+initWebLibrary({ navigate, link });
 
 // ---------- actions ----------
 async function run(action: () => Promise<unknown>, success?: string): Promise<void> {
@@ -286,6 +288,8 @@ function notificationControls(compact: boolean): HTMLElement | null {
 onAuthStateChanged(api.authInstance(), async (user) => {
   state.user = user; state.profile = null; state.sharing = null;
   clearSubscriptions();
+  // The phone connection belongs to the account that opened it.
+  resetWebLibrary();
   render();
   if (user) await startSession(user).catch((error) => { state.message = { text: describe(error), error: true }; render(); });
 });
@@ -1391,6 +1395,9 @@ function downloadView(): HTMLElement {
         h("li", {}, "Open the downloaded file on your Android phone."),
         h("li", {}, "If Android asks, allow installing apps from your browser or files app."),
         h("li", {}, "Open Mihon Together → More → Friends to create your account. Sharing with friends starts on; you can turn anything off.")),
+      h("h3", {}, "Read on your computer"),
+      h("p", {}, "Sign in here with the same account and open ", link("/my-library", "My library"),
+        ": this website connects straight to your phone and shows its library, chapters and pages. Keep the app open on the phone, best on the same Wi-Fi."),
       h("p", { class: "muted small" }, "This is a test build, installed next to Mihon (it doesn't replace it). The app tells you when a new version is out. Made by Berti.")));
     return () => undefined;
   });
@@ -1460,15 +1467,18 @@ function renderNow(): void {
   // The active page's link is marked for screen readers (and styled).
   const navLink = (target: string, label: string) => {
     const element = link(target, label);
-    if (path === target) element.setAttribute("aria-current", "page");
+    if (path === target || (target === "/my-library" && path.startsWith("/my-library/"))) element.setAttribute("aria-current", "page");
     return element;
   };
-  const nav = signedIn ? h("nav", { "aria-label": "Main" }, navLink("/", "Friends"), navLink("/activity", "Activity"), navLink("/library", "Library"),
+  const nav = signedIn ? h("nav", { "aria-label": "Main" }, navLink("/", "Friends"), navLink("/activity", "Activity"), navLink("/library", "Shared library"),
+    navLink("/my-library", "My library"),
     navLink("/messages", unread ? `Messages (${unread})` : "Messages"), navLink("/privacy-settings", "Privacy"), navLink("/account", "Account"),
     navLink("/patch-notes", "Patch notes"), h("a", { href: "/privacy.html" }, "Policy"), githubLink())
     : h("nav", { "aria-label": "Main" }, navLink("/download", "Download"), navLink("/patch-notes", "Patch notes"), h("a", { href: "/privacy.html" }, "Privacy policy"), githubLink());
   const invite = inviteHandle(path);
   if (!invite) state.showSignIn = false;
+  const inMyLibrary = signedIn && /^\/my-library(\/|$)/.test(path);
+  if (!inMyLibrary) leaveWebLibrary();
   let body: HTMLElement;
   if (!knownRoute(path)) body = notFoundView();
   else if (path === "/download") body = downloadView();
@@ -1479,6 +1489,7 @@ function renderNow(): void {
   else if (/^\/friend\/[^/]+\/(library|favorites)$/.test(path)) body = friendGrid(path);
   else if (path.startsWith("/friend/")) body = friendView(path.slice("/friend/".length));
   else if (path === "/library") body = myLibraryView();
+  else if (inMyLibrary) body = myLibraryPage(state.user!.uid, path);
   else if (path === "/messages") body = messagesView();
   else if (path.startsWith("/chat/")) body = chatView(path.slice("/chat/".length));
   else if (path.startsWith("/group/")) body = groupView(path.slice("/group/".length));
