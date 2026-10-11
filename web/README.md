@@ -13,6 +13,7 @@ What it does:
 - Account deletion (password re-auth plus typing DELETE). This is the web deletion link Google Play requires.
 - The privacy policy page, rendered from `docs/PRIVACY_POLICY.md`.
 - **My library** (`/my-library`, `src/weblibrary/`): the signed-in user's own phone library, read in the browser over a direct WebRTC data channel (covers, chapters, a paged/long-strip reader, progress saved on the phone). Firestore only carries the signaling. Contract: `docs/WEB_LIBRARY_PROTOCOL.md`.
+- **Translate** in the My library reader and the `/translator` setup page: pages go only to the Mihon Together Translator on the same PC (`http://127.0.0.1:47823`, built on Koharu; contract in `docs/KOHARU_TRANSLATION_PLAN.md`, client in `src/weblibrary/translator.ts`). Local builds offer **Use a fake translator (development)** (`dev-translator.ts`), which stamps a TRANSLATED banner on pages.
 
 What stays in the app: publishing your library and favorites (they come from your local library), reading together, and editing your profile look.
 

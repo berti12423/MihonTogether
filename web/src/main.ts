@@ -12,6 +12,7 @@ import {
 import { joinableRooms, progressLabel, Review, stars, visibleQuote, withoutBlocked } from "./logic";
 import { challengeProgress, groupRecent, monthName, monthOf, seasons, XP_RULES } from "./logic";
 import { initWebLibrary, leaveWebLibrary, myLibraryPage, resetWebLibrary } from "./weblibrary/views";
+import { translatorSetup } from "./weblibrary/translator-page";
 
 const ACCENTS = ["#5C6BC0", "#EF5350", "#FFA726", "#66BB6A", "#26C6DA", "#AB47BC", "#EC407A", "#8D6E63"];
 const SHARING_LABELS: Record<string, string> = {
@@ -1398,6 +1399,7 @@ function downloadView(): HTMLElement {
       h("h3", {}, "Read on your computer"),
       h("p", {}, "Sign in here with the same account and open ", link("/my-library", "My library"),
         ": this website connects straight to your phone and shows its library, chapters and pages. Keep the app open on the phone, best on the same Wi-Fi."),
+      h("p", {}, "Raw pages can be translated there too, fully on your PC: ", link("/translator", "get the translator"), "."),
       h("p", { class: "muted small" }, "This is a test build, installed next to Mihon (it doesn't replace it). The app tells you when a new version is out. Made by Berti.")));
     return () => undefined;
   });
@@ -1483,6 +1485,7 @@ function renderNow(): void {
   if (!knownRoute(path)) body = notFoundView();
   else if (path === "/download") body = downloadView();
   else if (path === "/patch-notes") body = patchNotesView();
+  else if (path === "/translator") body = cachedPage("/translator", (container) => translatorSetup(container, { link, githubUrl: GITHUB_URL }));
   else if (!signedIn) body = invite && !state.showSignIn ? inviteLandingView(invite) : signInView();
   else if (!state.sharing) body = h("p", { class: "muted" }, "Loading…");
   else if (!state.profile) body = profileSetupView();

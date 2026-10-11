@@ -9,6 +9,9 @@ import {
   MangaDetails, nextChapter, pageStep, parseLibraryRoute, prefetchPages, problemText, ProgressThrottle, ReaderLayout, requestErrorText,
   safeImageType, startPage, tapStep, visibleCategories, ChapterPages,
 } from "./protocol";
+import {
+  cacheKey, healthText, indexedDbCache, pageTranslator, setTranslateOn, TranslationCache, TranslationQueue, translateOn, TranslatorError,
+} from "./translator";
 
 declare const __DEV_TOOLS__: boolean;
 
@@ -241,7 +244,8 @@ function draw(path: string): void {
 /** What this page is, under the connection card while not connected. */
 function intro(): HTMLElement {
   return h("p", { class: "muted small" },
-    "Read the library on your phone here. Your phone sends covers and pages straight to this browser over an encrypted connection; nothing is uploaded. Best on the same Wi-Fi.");
+    "Read the library on your phone here. Your phone sends covers and pages straight to this browser over an encrypted connection; nothing is uploaded. Best on the same Wi-Fi. ",
+    "Raw pages can be translated on this PC with the ", host.link("/translator", "Mihon Together Translator"), ".");
 }
 
 function drawBar(): void {
@@ -371,7 +375,8 @@ function listView(): { element: HTMLElement; stop: () => void } {
   drawGrid();
   const element = h("div", {},
     h("div", { class: "row between" }, h("h2", {}, "My library"), h("button", { class: "secondary", onclick: () => loadLibrary() }, "Refresh")),
-    tabs, h("div", { class: "row" }, search, counter), empty, grid);
+    tabs, h("div", { class: "row" }, search, counter), empty, grid,
+    h("p", { class: "muted small" }, "Reading raw Japanese, Korean or Chinese pages? ", host.link("/translator", "Translate them on this PC"), "."));
   return { element, stop: () => observer.disconnect() };
 }
 
@@ -442,7 +447,13 @@ function chapterRow(manga: MangaDetails, chapter: Chapter): HTMLElement {
 
 // ---------- /my-library/:mangaId/:chapterId: reader ----------
 
-interface PageImage { promise: Promise<string>; url: string | null; controller: AbortController }
+interface PageImage { promise: Promise<string>; url: string | null; controller: AbortController; bytes?: Uint8Array; contentType?: string }
+/** A page on screen: its image and the badge for its translation. */
+interface ShownPage { img: HTMLImageElement; badge: HTMLElement }
+
+/** Translated pages, kept across chapters and visits (IndexedDB; no cache without storage). */
+let translationCache: TranslationCache | null = null;
+const TARGET = "en-US";
 
 function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element: HTMLElement; stop: () => void } {
   const link = session.link!;
@@ -452,7 +463,8 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
   const indicator = h("span", { class: "muted small wl-indicator", "aria-live": "polite" });
   const toggles = h("span", { class: "row" });
   const body = h("div", { class: "wl-body" }, h("p", { class: "muted center" }, "Loading pages…"));
-  const element = h("div", { class: "wl-reader" }, h("div", { class: "wl-toolbar row" }, back, title, indicator, toggles), body);
+  const notice = h("div", { class: "wl-tnotice", "aria-live": "polite" });
+  const element = h("div", { class: "wl-reader" }, h("div", { class: "wl-toolbar row" }, back, title, indicator, toggles), notice, body);
 
   let alive = true;
   let manga: MangaDetails | null = null;
@@ -461,6 +473,115 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
   let throttle: ProgressThrottle | null = null;
   let bodyStop: () => void = () => undefined;
   const images = new Map<number, PageImage>();
+
+  // Translation (the local translator on this PC): originals show until a translated page arrives.
+  const translator = pageTranslator();
+  let translating = translateOn(mangaId);
+  let queue: TranslationQueue | null = null;
+  let stopTranslator: (() => void) | null = null;
+  const translated = new Map<number, string>();
+  /** Pages the reader flipped back to the original. */
+  const originals = new Set<number>();
+  const shown = new Map<number, ShownPage>();
+
+  const dropTranslation = (index: number) => {
+    const url = translated.get(index);
+    if (url) URL.revokeObjectURL(url);
+    translated.delete(index);
+    originals.delete(index);
+  };
+  /** Puts the right image and badge on a page that's on screen. */
+  const refresh = (index: number) => {
+    const page = shown.get(index);
+    const entry = images.get(index);
+    if (!page || !entry?.url) return;
+    const url = translated.get(index);
+    const showOriginal = !translating || !url || originals.has(index);
+    const src = showOriginal ? entry.url : url;
+    if (page.img.getAttribute("src") !== src) page.img.src = src;
+    page.img.alt = `Page ${index + 1}${showOriginal ? "" : " (translated)"}`;
+    const status = translating ? queue?.status(index) ?? null : null;
+    if (url && translating) {
+      replace(page.badge, h("button", { class: "wl-badge", "aria-pressed": String(originals.has(index)), title: "Switch between the translated page and the original",
+        onclick: (event) => { event.stopPropagation(); if (originals.has(index)) originals.delete(index); else originals.add(index); refresh(index); } },
+      originals.has(index) ? "Show translation" : "Original"));
+    } else if (status?.state === "translating") {
+      replace(page.badge, h("span", { class: "wl-badge" }, "Translating…"));
+    } else if (status?.state === "error" && status.error && status.error.code !== "not_ready" && status.error.code !== "not_running") {
+      replace(page.badge, h("button", { class: "wl-badge", title: status.error.message, onclick: (event) => { event.stopPropagation(); queue?.retryFailed(); } },
+        "Not translated • Retry"));
+    } else replace(page.badge);
+  };
+  /** A page's frame: the image (original or translated) and its badge. */
+  const pageBox = (index: number, url: string) => {
+    const img = h("img", { class: "wl-page", src: url, alt: `Page ${index + 1}` }) as HTMLImageElement;
+    const badge = h("div", { class: "wl-badges" });
+    shown.set(index, { img, badge });
+    refresh(index);
+    return h("div", { class: "wl-pagebox" }, img, badge);
+  };
+  const drawNotice = () => {
+    if (!translating || translator.ready) { replace(notice); return; }
+    const state = translator.state;
+    const missing = state === "absent" || state === "error";
+    const devFake = __DEV_TOOLS__ && missing ? h("button", { class: "secondary", onclick: () => useFakeTranslator() }, "Use a fake translator (development)") : null;
+    replace(notice, h("p", { class: missing ? "wl-tmsg error" : "wl-tmsg notice" },
+      state === "absent" ? "Translate needs the Mihon Together Translator running on this PC. Pages show untranslated until then. "
+        : state === "unknown" ? "Looking for the translator on this PC… " : `Translator: ${healthText(state, translator.health)} `,
+      missing ? host.link("/translator", "Set up the translator") : null, devFake ? " " : null, devFake));
+  };
+  const startTranslation = () => {
+    if (queue) return;
+    translationCache ??= indexedDbCache();
+    queue = new TranslationQueue({
+      // Not ready: the page waits (error state) and is retried once the translator is ready.
+      translate: (bytes, contentType, signal) => (translator.ready
+        ? translator.translate(bytes, contentType, TARGET, signal) : Promise.reject(new TranslatorError("not_ready"))),
+      key: async (bytes) => (translator.health && Object.keys(translator.health.models).length ? cacheKey(bytes, TARGET, translator.health.models) : null),
+      cache: translationCache,
+      onUpdate: (index, status) => {
+        if (!alive) return;
+        if (status.state === "done" && status.blob && images.has(index)) {
+          dropTranslation(index);
+          translated.set(index, URL.createObjectURL(status.blob));
+        }
+        refresh(index);
+      },
+    });
+    queue.focus(current);
+    for (const [index, entry] of images) if (entry.bytes) queue.setPage(index, entry.bytes, entry.contentType ?? "image/jpeg");
+    let wasReady = translator.ready;
+    stopTranslator = translator.subscribe(() => {
+      if (!alive) return;
+      if (translator.ready && !wasReady) queue?.retryFailed();
+      wasReady = translator.ready;
+      drawNotice();
+    });
+    drawNotice();
+  };
+  const stopTranslation = () => {
+    stopTranslator?.(); stopTranslator = null;
+    queue?.close(); queue = null;
+    for (const index of [...translated.keys()]) dropTranslation(index);
+    originals.clear();
+    drawNotice();
+  };
+  const setTranslating = (on: boolean) => {
+    translating = on;
+    setTranslateOn(mangaId, on);
+    if (on) startTranslation(); else stopTranslation();
+    for (const index of shown.keys()) refresh(index);
+  };
+  /** Development only: the fake translator (dev-translator.ts) replaces the real one in this tab. */
+  const useFakeTranslator = () => {
+    if (__DEV_TOOLS__) {
+      import("./dev-translator").then(({ useDevTranslator }) => {
+        useDevTranslator();
+        if (view?.key === `reader|${chapterId}`) { view.stop(); view = null; }
+        redraw();
+      });
+    }
+  };
 
   const image = (index: number): PageImage => {
     let entry = images.get(index);
@@ -472,6 +593,9 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
       // Dropped while it loaded (left the chapter or scrolled far away): not needed any more.
       if (!alive || images.get(index) !== created) { URL.revokeObjectURL(url); throw new Error("dropped"); }
       created.url = url;
+      created.bytes = result.bytes;
+      created.contentType = safeImageType(result.contentType);
+      queue?.setPage(index, result.bytes, created.contentType);
       return url;
     });
     created.promise.catch(() => { if (images.get(index) === created && !created.url) images.delete(index); });
@@ -484,6 +608,9 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
     images.delete(index);
     entry.controller.abort();
     if (entry.url) URL.revokeObjectURL(entry.url);
+    queue?.forget(index);
+    dropTranslation(index);
+    shown.delete(index);
   };
   /** Loads the current page and the next 3, and lets go of pages far from it. */
   const around = (index: number) => {
@@ -495,6 +622,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
   const setCurrent = (index: number) => {
     current = index;
     indicator.textContent = `${index + 1} / ${pageCount}`;
+    queue?.focus(index);
     throttle?.page(index);
     if (throttle?.finished) { session.libraryStale = true; session.details.delete(mangaId); }
   };
@@ -519,9 +647,10 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
       setCurrent(index);
       around(index);
       const mine = ++token;
+      shown.clear();
       replace(frame, h("p", { class: "muted center wl-loading" }, `Loading page ${index + 1}…`));
       images.get(index)!.promise.then((url) => {
-        if (mine === token) replace(frame, h("img", { class: "wl-page", src: url, alt: `Page ${index + 1}` }));
+        if (mine === token) replace(frame, pageBox(index, url));
       }, (error) => {
         if (mine === token) replace(frame, pageError(index, error, () => { release(index); show(index); }));
       });
@@ -531,7 +660,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
       if (atEnd) { if (delta < 0) show(pageCount - 1); return; }
       const target = current + delta;
       if (target < 0) return;
-      if (target >= pageCount) { atEnd = true; token++; replace(frame, endPanel()); return; }
+      if (target >= pageCount) { atEnd = true; token++; shown.clear(); replace(frame, endPanel()); return; }
       show(target);
     };
     frame.addEventListener("click", (event) => {
@@ -549,7 +678,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
     show(current);
     // The toolbar at the top of the screen, so a whole page fits below it.
     requestAnimationFrame(() => element.scrollIntoView({ block: "start" }));
-    return () => document.removeEventListener("keydown", onKey);
+    return () => { document.removeEventListener("keydown", onKey); shown.clear(); };
   };
 
   // Long strip: every page in a column; the page in the middle of the screen is the current one.
@@ -563,7 +692,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
       image(index).promise.then((url) => {
         if (!attached.has(index)) return;
         slot.style.height = "";
-        replace(slot, h("img", { class: "wl-page", src: url, alt: `Page ${index + 1}` }));
+        replace(slot, pageBox(index, url));
       }, (error) => {
         if (!attached.has(index)) return;
         replace(slot, pageError(index, error, () => { attached.delete(index); release(index); attach(index); }));
@@ -571,6 +700,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
     };
     const detach = (index: number) => {
       if (!attached.delete(index)) return;
+      shown.delete(index);
       const slot = slots[index];
       // Keep the height so the strip doesn't jump; the image comes back when it's near again.
       if (slot.querySelector("img")) slot.style.height = `${slot.offsetHeight}px`;
@@ -610,6 +740,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
       attached.clear();
+      shown.clear();
     };
   };
 
@@ -620,7 +751,9 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
       h("button", { class: "chip", onclick: () => switchLayout({ ...layout, mode: layout.mode === "paged" ? "strip" : "paged" }) },
         layout.mode === "paged" ? "Long strip" : "Paged"),
       layout.mode === "paged" ? h("button", { class: "chip", "aria-pressed": String(layout.rtl), onclick: () => switchLayout({ ...layout, rtl: !layout.rtl }) },
-        layout.rtl ? "Right to left" : "Left to right") : null);
+        layout.rtl ? "Right to left" : "Left to right") : null,
+      h("button", { class: translating ? "chip on" : "chip", "aria-pressed": String(translating), title: "Translate the pages with the translator on this PC",
+        onclick: () => { setTranslating(!translating); build(); } }, "Translate"));
     element.classList.toggle("rtl", layout.mode === "paged" && layout.rtl);
   };
   const switchLayout = (next: ReaderLayout) => {
@@ -641,6 +774,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
     throttle = new ProgressThrottle(pageCount, (lastPageRead, read) => {
       link.client.request("chapter.progress", { chapterId, lastPageRead, read }).catch(() => undefined);
     });
+    if (translating) startTranslation();
     build();
   }, (error) => {
     if (!alive) return;
@@ -654,6 +788,8 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
       if (!alive) return;
       alive = false;
       bodyStop();
+      stopTranslator?.(); stopTranslator = null;
+      queue?.close(); queue = null;
       throttle?.flush();
       if (throttle) { session.details.delete(mangaId); session.libraryStale = true; }
       for (const index of [...images.keys()]) release(index);

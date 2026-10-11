@@ -23,9 +23,12 @@ await build({
     __DEV_TOOLS__: JSON.stringify(!process.env.MIHON_WEB_FIREBASE_CONFIG),
   },
 });
-// The demo phone must never reach the production site.
+// The demo phone and the fake translator must never reach the production site.
 if (process.env.MIHON_WEB_FIREBASE_CONFIG && readFileSync("dist/app.js", "utf8").includes("Demo phone")) {
   throw new Error("The development demo phone ended up in a production bundle");
+}
+if (process.env.MIHON_WEB_FIREBASE_CONFIG && readFileSync("dist/app.js", "utf8").includes("fake-dev-1")) {
+  throw new Error("The development fake translator ended up in a production bundle");
 }
 cpSync("static", "dist", { recursive: true });
 
