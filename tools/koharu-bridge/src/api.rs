@@ -5,17 +5,19 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::Body,
-    extract::{Query, Request, State as AxumState},
+    extract::{DefaultBodyLimit, Query, Request, State as AxumState},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     engine::{EngineError, Page, PageFormat, PageTranslator},
     queue::Queue,
+    settings::{self, INPAINTING_MODELS, LlmOption, OCR_MODELS, Settings, SettingsStore},
     status::{self, State, Status},
 };
 
@@ -51,12 +53,26 @@ pub struct AppState {
     pub engine: Arc<dyn PageTranslator>,
     pub version: &'static str,
     pub port: u16,
+    pub settings: Arc<SettingsStore>,
+    /// Local translation models this build can use (the website's model list).
+    pub llms: Arc<Vec<LlmOption>>,
+    /// The NVIDIA GPU, if one was found, so the website can say which models fit.
+    pub gpu: Option<crate::gpu::Gpu>,
 }
+
+/// Largest `PUT /settings` body.
+pub const MAX_SETTINGS_BYTES: usize = 16 * 1024;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/translate", post(translate))
+        .route(
+            "/settings",
+            get(get_settings)
+                .put(put_settings)
+                .layer(DefaultBodyLimit::max(MAX_SETTINGS_BYTES)),
+        )
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
@@ -124,7 +140,7 @@ fn preflight_response() -> Response {
     let headers = response.headers_mut();
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST"),
+        HeaderValue::from_static("GET, POST, PUT"),
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -167,9 +183,105 @@ struct Health<'a> {
     models: &'a status::Models,
     queue: usize,
     last_page_ms: Option<u64>,
+    /// Only on the phone port: whether a valid pairing token was sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paired: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct Choice {
+    id: &'static str,
+    name: &'static str,
+}
+
+#[derive(Serialize)]
+struct SettingsOptions<'a> {
+    ocr: Vec<Choice>,
+    inpainting: Vec<Choice>,
+    llm: &'a [LlmOption],
+    #[serde(rename = "maxInstructions")]
+    max_instructions: usize,
+    #[serde(rename = "maxFonts")]
+    max_fonts: usize,
+    gpu: Option<&'a crate::gpu::Gpu>,
+}
+
+#[derive(Serialize)]
+struct SettingsBody<'a> {
+    settings: &'a Settings,
+    defaults: Settings,
+    options: SettingsOptions<'a>,
+}
+
+fn settings_response(app: &AppState, current: &Settings) -> Response {
+    let choices = |list: &[(&'static str, &'static str)]| {
+        list.iter().map(|(id, name)| Choice { id, name }).collect::<Vec<_>>()
+    };
+    let body = SettingsBody {
+        settings: current,
+        defaults: Settings::default(),
+        options: SettingsOptions {
+            ocr: choices(&OCR_MODELS),
+            inpainting: choices(&INPAINTING_MODELS),
+            llm: &app.llms,
+            max_instructions: settings::MAX_INSTRUCTIONS,
+            max_fonts: settings::MAX_FONTS,
+            gpu: app.gpu.as_ref(),
+        },
+    };
+    (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("application/json")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        serde_json::to_vec(&body).expect("settings serialize"),
+    )
+        .into_response()
+}
+
+/// `GET /settings`: the current choices, the defaults and what can be chosen.
+async fn get_settings(AxumState(app): AxumState<AppState>) -> Response {
+    settings_response(&app, &app.settings.current().0)
+}
+
+/// `PUT /settings`: replaces the settings; they apply from the next page.
+async fn put_settings(AxumState(app): AxumState<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    let json = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(';').next().unwrap_or_default().trim().eq_ignore_ascii_case("application/json"));
+    if !json {
+        return error_response(StatusCode::BAD_REQUEST, "bad_settings", "Send the settings as JSON.");
+    }
+    let settings: Settings = match serde_json::from_slice(&body) {
+        Ok(settings) => settings,
+        Err(error) => {
+            return error_response(StatusCode::BAD_REQUEST, "bad_settings", &format!("Invalid settings: {error}"));
+        }
+    };
+    if let Err(message) = settings.validate(&app.llms) {
+        return error_response(StatusCode::BAD_REQUEST, "bad_settings", &message);
+    }
+    if let Err(message) = app.settings.update(settings.clone()) {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "failed", &message);
+    }
+    app.status.set_models(crate::koharu::models(&settings));
+    println!(
+        "Settings saved from the website: OCR {}, inpainting {}, translation {}{}.",
+        settings.ocr,
+        settings.inpainting,
+        settings.llm,
+        if settings.instructions.trim().is_empty() { "" } else { ", with instructions" }
+    );
+    settings_response(&app, &settings)
 }
 
 async fn health(AxumState(app): AxumState<AppState>) -> Response {
+    health_response(&app, None)
+}
+
+/// The `/health` JSON; `paired` is added on the phone port only.
+pub fn health_response(app: &AppState, paired: Option<bool>) -> Response {
     let snapshot = app.status.snapshot();
     let body = Health {
         name: "mihon-together-translator",
@@ -182,6 +294,7 @@ async fn health(AxumState(app): AxumState<AppState>) -> Response {
         models: &snapshot.models,
         queue: app.queue.open(),
         last_page_ms: snapshot.last_page_ms,
+        paired,
     };
     (
         [
@@ -195,10 +308,10 @@ async fn health(AxumState(app): AxumState<AppState>) -> Response {
 
 #[derive(Deserialize)]
 pub struct TranslateParams {
-    target: Option<String>,
+    pub target: Option<String>,
     /// Accepted for forward compatibility; Koharu detects the source language itself.
     #[allow(dead_code)]
-    source: Option<String>,
+    pub source: Option<String>,
 }
 
 /// A request body rejection, before anything reaches the queue.
@@ -298,7 +411,8 @@ fn rejection_response(rejection: Rejection) -> Response {
     }
 }
 
-async fn translate(
+/// `POST /translate`, shared by both ports (the phone port checks the token first).
+pub async fn translate(
     AxumState(app): AxumState<AppState>,
     Query(params): Query<TranslateParams>,
     headers: HeaderMap,
@@ -410,7 +524,132 @@ mod tests {
             engine,
             version: "0.1.0",
             port: PORT,
+            settings: Arc::new(SettingsStore::load(None, &test_llms())),
+            llms: Arc::new(test_llms()),
+            gpu: Some(crate::gpu::Gpu { name: "Test GPU".to_owned(), vram_mb: 8192 }),
         })
+    }
+
+    pub(crate) fn test_llms() -> Vec<LlmOption> {
+        ["gemma4-12b-it", "qwen3.5-9b"]
+            .map(|id| LlmOption {
+                id: id.to_owned(),
+                name: id.to_owned(),
+                vision: true,
+                reasoning: true,
+                size_mb: Some(5000),
+                projector_mb: Some(500),
+            })
+            .to_vec()
+    }
+
+    fn put_settings_request(json: &str) -> axum::http::Request<Body> {
+        request(Method::PUT, "/settings")
+            .header(header::ORIGIN, "https://mihontogether.web.app")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json.to_owned()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn settings_round_trip_and_update_health_models() {
+        let app = app(State::Ready);
+        let response = app
+            .clone()
+            .oneshot(request(Method::GET, "/settings").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["settings"]["llm"], "gemma4-12b-it");
+        assert_eq!(body["options"]["llm"].as_array().unwrap().len(), 2);
+        assert_eq!(body["options"]["ocr"][1]["id"], "manga-ocr");
+        assert_eq!(body["options"]["gpu"]["vramMb"], 8192);
+        assert_eq!(body["options"]["llm"][0]["sizeMb"], 5000);
+
+        let response = app
+            .clone()
+            .oneshot(put_settings_request(r#"{"llm":"qwen3.5-9b","ocr":"manga-ocr","instructions":"Keep honorifics."}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "https://mihontogether.web.app");
+        let body = body_json(response).await;
+        assert_eq!(body["settings"]["llm"], "qwen3.5-9b");
+        assert_eq!(body["settings"]["inpainting"], "lama");
+
+        let response = app
+            .oneshot(request(Method::GET, "/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let health = body_json(response).await;
+        assert_eq!(health["models"]["llm"], "qwen3.5-9b");
+        assert_eq!(health["models"]["ocr"], "manga-ocr");
+        assert_eq!(health["models"]["settings"].as_str().unwrap().len(), 8);
+    }
+
+    #[tokio::test]
+    async fn bad_settings_are_refused_and_change_nothing() {
+        let app = app(State::Ready);
+        for json in [
+            r#"{"llm":"not-a-model"}"#,
+            r#"{"temperature":9}"#,
+            r#"{"unknownField":true}"#,
+            "not json",
+        ] {
+            let response = app.clone().oneshot(put_settings_request(json)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{json}");
+            let body = body_json(response).await;
+            assert_eq!(body["error"], "bad_settings");
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                request(Method::PUT, "/settings")
+                    .header(header::CONTENT_TYPE, "text/plain")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response = app
+            .oneshot(request(Method::GET, "/settings").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["settings"]["llm"], "gemma4-12b-it");
+    }
+
+    #[tokio::test]
+    async fn other_websites_cannot_change_settings() {
+        let response = app(State::Ready)
+            .oneshot(
+                request(Method::PUT, "/settings")
+                    .header(header::ORIGIN, "https://evil.example")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"llm":"qwen3.5-9b"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn the_preflight_allows_put() {
+        let response = app(State::Ready)
+            .oneshot(
+                request(Method::OPTIONS, "/settings")
+                    .header(header::ORIGIN, "https://mihontogether.web.app")
+                    .header("access-control-request-method", "PUT")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(response.headers()[header::ACCESS_CONTROL_ALLOW_METHODS].to_str().unwrap().contains("PUT"));
     }
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n0123456789abcdefghij";
@@ -475,6 +714,8 @@ mod tests {
         assert!(json["progress"].is_null());
         assert!(json["lastPageMs"].is_null());
         assert!(json["models"]["llm"].is_string());
+        // `paired` belongs to the phone port only.
+        assert!(json.get("paired").is_none());
     }
 
     #[tokio::test]
@@ -555,7 +796,7 @@ mod tests {
             headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
             "https://mihontogether.web.app"
         );
-        assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_METHODS], "GET, POST");
+        assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_METHODS], "GET, POST, PUT");
         assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_HEADERS], "Content-Type");
         assert_eq!(headers["access-control-allow-private-network"], "true");
         assert_eq!(headers[header::ACCESS_CONTROL_MAX_AGE], "600");
@@ -691,6 +932,19 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(body_json(response).await["error"], "not_found");
+    }
+
+    #[tokio::test]
+    async fn pairing_is_not_offered_on_the_local_port() {
+        let response = app(State::Ready)
+            .oneshot(
+                request(Method::POST, "/pair")
+                    .body(Body::from(r#"{"code":"123456","device":"x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[test]

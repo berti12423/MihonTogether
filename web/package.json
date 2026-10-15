@@ -15,5 +15,10 @@
     "esbuild": "0.25.10",
     "marked": "16.3.0",
     "typescript": "5.9.3"
+  },
+  "overrides": {
+    "@firebase/firestore": {
+      "@grpc/grpc-js": "1.14.5"
+    }
   }
 }

@@ -7,12 +7,16 @@ class MemoryStore {
   docs = new Map();
   tail = Promise.resolve();
   retryOnce = false;
+  /** Paths read inside transactions (Firestore locks these), for contention tests. */
+  txReads = [];
+  /** A plain read outside any transaction (no lock), like Firestore's `doc.get()`. */
+  async read(path) { return structuredClone(this.docs.get(path) ?? null); }
   transact(body) {
     const operation = this.tail.then(async () => {
       const attempt = async (commit) => {
         const staged = new Map([...this.docs].map(([path, data]) => [path, structuredClone(data)]));
         const result = await body({
-          get: async (path) => structuredClone(staged.get(path) ?? null),
+          get: async (path) => { this.txReads.push(path); return structuredClone(staged.get(path) ?? null); },
           query: async (collection, field, value) => [...staged].filter(([path, data]) => path.startsWith(`${collection}/`) &&
             !path.slice(collection.length + 1).includes('/') && field.split('.').reduce((v, name) => v?.[name], data) === value)
             .map(([path, data]) => ({ path, data: structuredClone(data) })),
@@ -502,6 +506,18 @@ test('global ranking is on by default, public-fields only, and left at once on o
   await share(f, { invisible: true }, 'alice');
   assert.equal(board().alice, undefined);
   await rejects(f.call('socialUpdateSharing', 'alice', { operationId: op(), expectedGeneration: 2, settings: { ...settings(), globalRanking: 'yes' }, hideContentKey: null }), 'invalid-argument');
+});
+test('opting out of the ranking also clears the daily boards that are still kept', async () => {
+  const f = await fixture();
+  const board = (day) => f.store.docs.get(`leaderboards/${day}`)?.entries ?? {};
+  await f.call('socialRecordChapter', 'alice', chapter({ generation: 1 }));
+  const yesterday = statsDay(f.now());
+  f.advance(86_400_000);
+  await f.call('socialRecordChapter', 'alice', chapter({ generation: 1 }));
+  assert.ok(board(yesterday).alice && board(statsDay(f.now())).alice);
+  await share(f, { globalRanking: false });
+  assert.equal(board(yesterday).alice, undefined, 'yesterday is still readable by everyone, so it must not list an opted-out reader');
+  assert.equal(board(statsDay(f.now())).alice, undefined);
 });
 test('the global board keeps only the top readers', async () => {
   const f = await fixture();
@@ -1786,4 +1802,74 @@ test('double XP on Fridays and Saturdays in Israel time and during the 1.0 launc
   // The daily cap doubles too.
   for (let i = 0; i < 250; i++) { f.advance(10_000); await f.call('socialRecordChapter', 'alice', chapter({ generation: 1 })); }
   assert.equal(f.store.docs.get('xp/alice').today, XP.dailyCap * 2);
+});
+// ---------- invisible hides everything (Berti's decision, 2026-10-14) ----------
+test('invisible reports library, favorites and activity as private to friends and refuses new activity', async () => {
+  const f = await fixture(); await befriend(f);
+  await share(f, { library: 'friends', favorites: 'friends', activity: 'friends' });
+  let sharing = (await f.call('socialGetFriend', 'bob', { otherUid: 'alice' })).sharing;
+  assert.deepEqual([sharing.library, sharing.favorites, sharing.activity], ['friends', 'friends', 'friends']);
+  await share(f, { library: 'friends', favorites: 'friends', activity: 'friends', invisible: true }, 'alice', 2);
+  sharing = (await f.call('socialGetFriend', 'bob', { otherUid: 'alice' })).sharing;
+  assert.deepEqual([sharing.library, sharing.favorites, sharing.activity], ['private', 'private', 'private']);
+  await rejects(f.call('socialPublishActivity', 'alice', { operationId: op(), generation: 3,
+    activity: { content: content(1), chapterKey: digest('chapter1'), chapterLabel: 'Chapter 1' } }), 'failed-precondition');
+  // Clearing an activity still works while invisible.
+  await f.call('socialPublishActivity', 'alice', { operationId: op(), generation: 3, activity: null });
+});
+
+// ---------- leaderboard contention (audit finding 2, 2026-10-14) ----------
+test('a reader outside the top of the ranking never locks or rewrites the shared boards', async () => {
+  const f = await fixture();
+  const readers = Array.from({ length: LEADERBOARD_SIZE }, (_, i) => `top${i}`);
+  for (const reader of readers) {
+    await f.call('socialUpdateProfile', reader, { operationId: op(), handle: reader, displayName: reader });
+    for (let n = 0; n < 2; n++) { f.advance(10_000); await f.call('socialRecordChapter', reader, chapter({ generation: 1 })); }
+  }
+  const day = statsDay(f.now());
+  const before = structuredClone([f.store.docs.get(`leaderboards/${day}`), f.store.docs.get('leaderboards/alltime')]);
+  await f.call('socialUpdateProfile', 'zed', { operationId: op(), handle: 'zed', displayName: 'Zed' });
+  f.store.txReads = [];
+  f.advance(10_000);
+  const result = await f.call('socialRecordChapter', 'zed', chapter({ generation: 1 }));
+  assert.equal(result.chapters, 1, 'the chapter still counts');
+  assert.deepEqual(f.store.txReads.filter((path) => path.startsWith('leaderboards/')), [], 'no transaction read a board');
+  assert.deepEqual([f.store.docs.get(`leaderboards/${day}`), f.store.docs.get('leaderboards/alltime')], before);
+  // Reading more than the 50th reader still enters both boards.
+  for (let n = 0; n < 2; n++) { f.advance(10_000); await f.call('socialRecordChapter', 'zed', chapter({ generation: 1 })); }
+  assert.equal(f.store.docs.get(`leaderboards/${day}`).entries.zed.chapters, 3);
+  assert.ok(f.store.docs.get('leaderboards/alltime').entries.zed);
+  assert.equal(Object.keys(f.store.docs.get(`leaderboards/${day}`).entries).length, LEADERBOARD_SIZE);
+});
+
+// ---------- account deletion keeps group rooms going (audit finding 3, 2026-10-14) ----------
+test('a deleted account leaves its rooms like a leave: members stay, the host hands over, empty rooms end', async () => {
+  const f = await fixture();
+  await group(f, ['bob', 'charlie']);
+  await befriend(f, 'bob', 'charlie');
+  const created = await f.call('socialRoomAction', 'alice', roomInput('create', { otherUid: 'bob', sessionId: op(), content: content(), position: position() }));
+  const roomId = created.roomId;
+  await f.call('socialRoomAction', 'alice', roomInput('invite', { roomId, otherUid: 'charlie' }));
+  for (const name of ['bob', 'charlie']) { f.advance(1_000); await f.call('socialRoomAction', name, roomInput('join', { roomId })); }
+  // A member's account goes: the room carries on for the others, without them.
+  assert.deepEqual(await f.service.departRoom(roomId, 'charlie'), { closed: false });
+  let room = f.store.docs.get(`rooms/${roomId}`);
+  assert.equal(room.state, 'active'); assert.deepEqual(room.participants, ['alice', 'bob']); assert.equal(room.members.charlie, undefined);
+  // The host's account goes and only bob would be left: nobody to read with, so the room ends.
+  assert.deepEqual(await f.service.departRoom(roomId, 'alice'), { closed: true });
+  assert.equal(f.store.docs.get(`rooms/${roomId}`).state, 'closed');
+  // Unknown or already closed rooms are fine.
+  assert.deepEqual(await f.service.departRoom(roomId, 'alice'), { closed: true });
+  assert.deepEqual(await f.service.departRoom(digest('nothing'), 'alice'), { closed: true });
+});
+test('a deleted host hands a room of three over instead of ending it', async () => {
+  const f = await fixture();
+  await group(f, ['bob', 'charlie']);
+  await befriend(f, 'bob', 'charlie');
+  const roomId = (await f.call('socialRoomAction', 'alice', roomInput('create', { otherUid: 'bob', sessionId: op(), content: content(), position: position() }))).roomId;
+  await f.call('socialRoomAction', 'alice', roomInput('invite', { roomId, otherUid: 'charlie' }));
+  for (const name of ['bob', 'charlie']) { f.advance(1_000); await f.call('socialRoomAction', name, roomInput('join', { roomId })); }
+  assert.deepEqual(await f.service.departRoom(roomId, 'alice'), { closed: false });
+  const room = f.store.docs.get(`rooms/${roomId}`);
+  assert.equal(room.hostUid, 'bob'); assert.deepEqual(room.participants, ['bob', 'charlie']); assert.equal(room.state, 'active');
 });

@@ -45,6 +45,8 @@ fun TranslationSettingsDialog(
     onSave: (TranslationSettings) -> Unit,
     onOpenUrl: (String) -> Unit,
     onDismiss: () -> Unit,
+    /** Pairing and status for "My PC (Koharu)", shown while that engine is chosen. */
+    pcSection: @Composable () -> Unit = {},
 ) {
     var engine by remember { mutableStateOf(initial.engine) }
     var key by remember { mutableStateOf(initial.apiKey) }
@@ -99,6 +101,7 @@ fun TranslationSettingsDialog(
                             Text(stringResource(MR.strings.translate_papago_get))
                         }
                     }
+                    TranslationPreferences.ENGINE_PC -> pcSection()
                     TranslationPreferences.ENGINE_GEMINI -> {
                         KeyField(key, { key = it }, stringResource(MR.strings.translate_key_label))
                         TextButton(onClick = { onOpenUrl(GEMINI_KEY_URL) }) {
@@ -111,9 +114,12 @@ fun TranslationSettingsDialog(
                     }
                 }
 
-                Text(stringResource(MR.strings.translate_source), style = MaterialTheme.typography.titleSmall)
-                TranslationPreferences.SOURCE_LANGUAGES.zip(SOURCE_LABELS).forEach { (value, label) ->
-                    Choice(stringResource(label), selected = source == value) { source = value }
+                // The PC translator detects the language itself.
+                if (engine != TranslationPreferences.ENGINE_PC) {
+                    Text(stringResource(MR.strings.translate_source), style = MaterialTheme.typography.titleSmall)
+                    TranslationPreferences.SOURCE_LANGUAGES.zip(SOURCE_LABELS).forEach { (value, label) ->
+                        Choice(stringResource(label), selected = source == value) { source = value }
+                    }
                 }
 
                 // Only the vision model can tell sound effects from dialogue.
@@ -189,10 +195,11 @@ private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
 
 /** A small pill over the reader while a page is being translated, or when translation stopped for a reason. */
 @Composable
-fun TranslationStatus(state: ReaderTranslation.State, modifier: Modifier = Modifier) {
+fun TranslationStatus(state: ReaderTranslation.State, modifier: Modifier = Modifier, onRetry: () -> Unit = {}) {
     val problem = state.problem
     if (!state.working && problem == null) return
-    if (!state.enabled && problem != ReaderTranslation.Problem.NO_KEY) return
+    val setupProblem = problem == ReaderTranslation.Problem.NO_KEY || problem == ReaderTranslation.Problem.PC_UNPAIRED
+    if (!state.enabled && !setupProblem) return
     Surface(
         modifier = modifier.widthIn(max = 360.dp).padding(horizontal = 16.dp),
         shape = RoundedCornerShape(16.dp),
@@ -217,7 +224,14 @@ fun TranslationStatus(state: ReaderTranslation.State, modifier: Modifier = Modif
                     Modifier.padding(start = 8.dp),
                 )
             } else {
-                Text(stringResource(problemText(problem)), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    stringResource(problemText(problem)),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (problem.retryable && state.enabled) {
+                    TextButton(onClick = onRetry) { Text(stringResource(MR.strings.action_retry)) }
+                }
             }
         }
     }
@@ -230,6 +244,9 @@ private fun problemText(problem: ReaderTranslation.Problem): StringResource = wh
     ReaderTranslation.Problem.NEEDS_WIFI -> MR.strings.translate_error_needs_wifi
     ReaderTranslation.Problem.UNAVAILABLE -> MR.strings.translate_error_unavailable
     ReaderTranslation.Problem.FAILED -> MR.strings.translate_error_failed
+    ReaderTranslation.Problem.PC_UNREACHABLE -> MR.strings.translate_pc_error_unreachable
+    ReaderTranslation.Problem.PC_LOADING -> MR.strings.translate_pc_error_loading
+    ReaderTranslation.Problem.PC_UNPAIRED -> MR.strings.translate_pc_error_unpaired
 }
 
 private val MODEL_LABELS = listOf(
@@ -243,6 +260,7 @@ private val ENGINE_LABELS = listOf(
     MR.strings.translate_engine_deepl,
     MR.strings.translate_engine_papago,
     MR.strings.translate_engine_gemini,
+    MR.strings.translate_engine_pc,
 )
 
 private val ENGINE_INFO = mapOf(
@@ -250,6 +268,7 @@ private val ENGINE_INFO = mapOf(
     TranslationPreferences.ENGINE_DEEPL to MR.strings.translate_engine_deepl_info,
     TranslationPreferences.ENGINE_PAPAGO to MR.strings.translate_engine_papago_info,
     TranslationPreferences.ENGINE_GEMINI to MR.strings.translate_engine_gemini_info,
+    TranslationPreferences.ENGINE_PC to MR.strings.translate_engine_pc_info,
 )
 
 private val SOURCE_LABELS = listOf(

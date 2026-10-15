@@ -287,6 +287,142 @@ class ReaderTranslationTest {
         assertEquals(1, engine.requests.size)
     }
 
+    /** A fake PC translator: returns "png of <page>", or fails with [failWith] while it is set. */
+    private class PcEngine(var failWith: TranslationException? = null) : PageRenderingEngine {
+        override val id = PcTranslationEngine.ID
+        val pages = mutableListOf<String>()
+
+        override suspend fun renderPage(image: ByteArray, targetLanguage: String): ByteArray {
+            val page = image.decodeToString()
+            pages += page
+            failWith?.let { throw it }
+            return "png of $page for $targetLanguage".toByteArray()
+        }
+    }
+
+    private fun pcSettings(token: String = "tok") = TranslationSettings(
+        "",
+        "m",
+        "ko",
+        "en",
+        translateSfx = false,
+        engine = TranslationPreferences.ENGINE_PC,
+        pcAddress = "192.168.1.20:47824",
+        pcName = "BERTI-PC",
+        pcToken = token,
+    )
+
+    @Test
+    fun `the PC engine gets whole pages, and its PNG is the page shown and cached`() = runTest {
+        val engine = PcEngine()
+        val translation = ReaderTranslation(
+            backgroundScope,
+            { pcSettings() },
+            PageTranslator(TranslationCache(dir), Images()),
+            { engine },
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        val pages = chapter(5)
+        translation.setEnabled(true, pages[1])
+
+        assertEquals(listOf("page 1", "page 2", "page 3"), engine.pages) // current + next 2, whole original pages
+        val shown = translation.fileFor(pages[1])!!
+        assertEquals("png of page 1 for en", shown.readText())
+        assertTrue(shown.name.endsWith(".png"))
+        assertTrue(translation.translationFor(pages[1])!!.blocks.isEmpty()) // nothing to edit
+
+        // A new reader session (e.g. reopening the chapter) reuses the cached PNGs instead of sending pages again.
+        val again = ReaderTranslation(
+            backgroundScope,
+            { pcSettings() },
+            PageTranslator(TranslationCache(dir), Images()),
+            { engine },
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        again.setEnabled(true, pages[1])
+        assertEquals(3, engine.pages.size)
+        assertEquals("png of page 2 for en", again.fileFor(pages[2])!!.readText())
+    }
+
+    @Test
+    fun `a closed PC shows the problem without halting, and a page turn or Retry asks again`() = runTest {
+        val engine = PcEngine(TranslationException.Unavailable("closed", PcTranslator.UNREACHABLE))
+        val translation = ReaderTranslation(
+            backgroundScope,
+            { pcSettings() },
+            PageTranslator(TranslationCache(dir), Images()),
+            { engine },
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        val pages = chapter(6)
+        translation.setEnabled(true, pages[0])
+        assertEquals(ReaderTranslation.Problem.PC_UNREACHABLE, translation.state.value.problem)
+        assertFalse(translation.state.value.halted)
+        assertEquals(listOf("page 0"), engine.pages) // the round stops instead of trying every page
+
+        engine.failWith = TranslationException.Unavailable("loading", PcTranslator.NOT_READY)
+        translation.onPageSelected(pages[0]) // the same page is asked for again on the next selection
+        assertEquals(listOf("page 0", "page 0"), engine.pages)
+        assertEquals(ReaderTranslation.Problem.PC_LOADING, translation.state.value.problem)
+
+        engine.failWith = null
+        translation.retry(pages[0])
+        assertEquals(null, translation.state.value.problem)
+        assertEquals(listOf("page 0", "page 0", "page 0", "page 1", "page 2"), engine.pages)
+        assertNotNull(translation.fileFor(pages[0]))
+    }
+
+    @Test
+    fun `an unpaired PC stops the queue and asks to pair`() = runTest {
+        val engine = PcEngine(TranslationException.InvalidKey("Pair again"))
+        val translation = ReaderTranslation(
+            backgroundScope,
+            { pcSettings() },
+            PageTranslator(TranslationCache(dir), Images()),
+            { engine },
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        val pages = chapter(4)
+        translation.setEnabled(true, pages[0])
+        assertEquals(ReaderTranslation.Problem.PC_UNPAIRED, translation.state.value.problem)
+        assertTrue(translation.state.value.halted)
+        translation.onPageSelected(pages[1])
+        assertEquals(1, engine.pages.size)
+
+        val notPaired = ReaderTranslation(
+            backgroundScope,
+            { pcSettings(token = "") },
+            PageTranslator(TranslationCache(dir), Images()),
+            { engine },
+        )
+        notPaired.setEnabled(true)
+        assertFalse(notPaired.state.value.enabled)
+        assertEquals(ReaderTranslation.Problem.PC_UNPAIRED, notPaired.state.value.problem)
+    }
+
+    @Test
+    fun `the PC cache key depends on image, engine and target only`() {
+        val cache = TranslationCache(dir)
+        val image = "page".toByteArray()
+        val key = cache.pageKey(image, PcTranslationEngine.ID, "en")
+        assertEquals(key, cache.pageKey(image, PcTranslationEngine.ID, "en"))
+        assertEquals(key, cache.key(image, PcTranslationEngine.ID, TranslationRequest("en", null, listOf("ctx"))))
+        assertNotEquals(key, cache.pageKey(image, PcTranslationEngine.ID, "de"))
+        assertNotEquals(key, cache.pageKey(image, "gemini:m:v1", "en"))
+        assertNotEquals(key, cache.pageKey("other".toByteArray(), PcTranslationEngine.ID, "en"))
+        assertTrue(cache.renderedFile(key, "page", extension = "png").name.endsWith("-page.png"))
+    }
+
+    @Test
+    fun `the PC engine counts as local for incognito and needs a pairing`() {
+        assertTrue(TranslationPreferences.isLocal(TranslationPreferences.ENGINE_PC))
+        assertTrue(TranslationPreferences.isLocal(TranslationPreferences.ENGINE_ON_DEVICE))
+        assertFalse(TranslationPreferences.isLocal(TranslationPreferences.ENGINE_GEMINI))
+        assertTrue(pcSettings().ready)
+        assertFalse(pcSettings(token = "").ready)
+        assertFalse(pcSettings().copy(pcAddress = "not an address").ready)
+    }
+
     @Test
     fun `mobile data permission is part of the saved settings`() {
         val base = settings()

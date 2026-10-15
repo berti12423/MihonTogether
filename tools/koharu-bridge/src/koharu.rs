@@ -22,35 +22,128 @@ use koharu_pipeline::{
     Operation, Pipeline, PipelineConfig, Progress, Request, Scope, StageOutput, TranslationConfig,
 };
 use koharu_rasterizer::{RasterOptions, Rasterizer};
-use koharu_renderer::Renderer;
+use koharu_renderer::{Renderer, TypesettingConfig};
 use koharu_scene::{
-    AssetInput, AssetMetadata, AssetRole, At, EntityId, PageDraft, Region, RegionSpec, Session,
-    Snapshot, TextRegion,
+    AssetInput, AssetMetadata, AssetRole, At, EntityId, Geometry, PageDraft, Presents,
+    RecognizedFrom, Region, RegionSpec, Session, Snapshot, TextRegion, Typography,
 };
-use koharu_translator::{GenerationConfig, Language, ModelSelection, Provider, ProvidersConfig};
+use koharu_translator::{
+    GenerationConfig, Language, ModelSelection, Provider, ProvidersConfig, Translator,
+};
 
 use crate::{
     engine::{EngineError, Page, PageFormat, PageTranslator},
+    settings::{LlmOption, Settings, SettingsStore},
     status::{Models, Progress as StatusProgress, State, Status},
 };
 
 /// Koharu's defaults at the pinned commit (see docs/koharu-spike.md).
 pub const DETECTION: &str = "koharu-layout-rfdetr-seg-2xl";
-pub const OCR: &str = "paddleocr-vl-1.6";
-pub const INPAINTING: &str = "lama";
 pub const LLM: &str = "gemma4-12b-it";
 
-pub fn models() -> Models {
+/// The models `/health` reports for `settings`, plus their fingerprint.
+pub fn models(settings: &Settings) -> Models {
     Models {
         detection: DETECTION.to_owned(),
-        ocr: OCR.to_owned(),
-        inpainting: INPAINTING.to_owned(),
-        llm: LLM.to_owned(),
+        ocr: settings.ocr.clone(),
+        inpainting: settings.inpainting.clone(),
+        llm: settings.llm.clone(),
+        settings: settings.fingerprint(),
     }
 }
 
-fn pipeline_config(target: Language) -> PipelineConfig {
-    PipelineConfig {
+/// Koharu's local translation models (the website's model list). Falls back to
+/// the default model alone if the catalog can't be read.
+pub async fn local_models() -> Vec<LlmOption> {
+    let listed = match Translator::models().await {
+        Ok(models) => models
+            .into_iter()
+            .filter(|model| model.provider == Provider::Local)
+            .filter_map(|model| {
+                let id = model.model?;
+                let sizes = crate::model_sizes::sizes(&id);
+                Some(LlmOption {
+                    name: model.name,
+                    vision: model.vision,
+                    reasoning: model.reasoning,
+                    size_mb: sizes.map(|(model, _)| model),
+                    projector_mb: sizes.map(|(_, projector)| projector),
+                    id,
+                })
+            })
+            .collect::<Vec<_>>(),
+        Err(error) => {
+            tracing::warn!("could not list Koharu's models: {error:#}");
+            Vec::new()
+        }
+    };
+    if listed.iter().any(|model| model.id == LLM) {
+        listed
+    } else {
+        let sizes = crate::model_sizes::sizes(LLM);
+        vec![LlmOption {
+            id: LLM.to_owned(),
+            name: "Gemma 4 12B Instruct".to_owned(),
+            vision: true,
+            reasoning: true,
+            size_mb: sizes.map(|(model, _)| model),
+            projector_mb: sizes.map(|(_, projector)| projector),
+        }]
+    }
+}
+
+fn ocr_model(id: &str) -> OcrModel {
+    match id {
+        "manga-ocr" => OcrModel::MangaOcr,
+        "baberu-ocr" => OcrModel::BaberuOcr,
+        "hayai-ocr" => OcrModel::HayaiOcr,
+        _ => OcrModel::PaddleOcrVl1_6,
+    }
+}
+
+fn inpainting_model(id: &str) -> InpaintingModel {
+    match id {
+        "aot-inpainting" => InpaintingModel::AotInpainting {},
+        _ => InpaintingModel::LaMa {},
+    }
+}
+
+/// Copies the website's choices into Koharu's pipeline config.
+fn apply_settings(config: &mut PipelineConfig, settings: &Settings) {
+    config.ocr = ocr_model(&settings.ocr);
+    config.inpainting = inpainting_model(&settings.inpainting);
+    let translation = &mut config.translation;
+    translation.model.model = Some(settings.llm.clone());
+    translation.model.quantization = None;
+    translation.model.vision = settings.vision;
+    translation.model.reasoning = settings.reasoning;
+    let instructions = settings.instructions.trim();
+    translation.instructions = (!instructions.is_empty()).then(|| instructions.to_owned());
+    let generation = &mut translation.generation;
+    generation.temperature = settings.temperature;
+    generation.top_p = settings.top_p;
+    generation.top_k = settings.top_k;
+    generation.max_tokens = settings.max_tokens;
+    generation.repeat_penalty = settings.repeat_penalty;
+    generation.reasoning = Some(settings.reasoning);
+    generation.vision = Some(settings.vision);
+}
+
+/// The website's fonts first, then Koharu's defaults as the fallback.
+fn typesetting(settings: &Settings) -> TypesettingConfig {
+    let mut config = TypesettingConfig::default();
+    if !settings.fonts.is_empty() {
+        let defaults = std::mem::take(&mut config.font_families);
+        config.font_families = settings.fonts.clone();
+        config
+            .font_families
+            .extend(defaults.into_iter().filter(|font| !settings.fonts.contains(font)));
+    }
+    config
+}
+
+fn pipeline_config(target: Language, settings: &Settings) -> PipelineConfig {
+    let mut config = PipelineConfig {
         detection: DetectionModel::KoharuLayoutRFDetrSeg2XL(
             KoharuLayoutRFDetrSeg2XLConfig::default(),
         ),
@@ -69,7 +162,9 @@ fn pipeline_config(target: Language) -> PipelineConfig {
         },
         inpainting: InpaintingModel::LaMa {},
         processor: Default::default(),
-    }
+    };
+    apply_settings(&mut config, settings);
+    config
 }
 
 /// Koharu reports the translation stage's model as its provider ("local").
@@ -100,6 +195,10 @@ pub struct KoharuEngine {
     target: tokio::sync::Mutex<Language>,
     renderer: Renderer,
     rasterizer: Rasterizer,
+    typesetting: Config<TypesettingConfig>,
+    settings: Arc<SettingsStore>,
+    /// The settings revision the pipeline was last configured with.
+    applied: tokio::sync::Mutex<u64>,
     /// Per-stage timings of the page being translated, for the console line.
     stage_times: Arc<Mutex<Vec<(String, Duration)>>>,
 }
@@ -107,19 +206,22 @@ pub struct KoharuEngine {
 impl KoharuEngine {
     /// Initializes Koharu's native runtimes (downloading them on first run) and
     /// builds the pipeline. Models load lazily; call [`Self::warm_up`] next.
-    pub async fn start(status: &Status) -> Result<Self> {
+    pub async fn start(status: &Status, settings: Arc<SettingsStore>) -> Result<Self> {
         initialize_with_retry(status).await;
         let device = koharu_ml::device(false);
         status.set_device(device.backend.to_string().to_ascii_lowercase());
         println!("Device: {} ({})", device.name, device.backend);
         let target = parse_target(crate::api::DEFAULT_TARGET).expect("default target parses");
-        let config = Config::memory(pipeline_config(target));
+        let (current, revision) = settings.current();
+        let config = Config::memory(pipeline_config(target, &current));
         let pipeline = Pipeline::from_config(
             config.clone(),
             Config::memory(ProvidersConfig::default()),
             device,
         )?;
-        let renderer = Renderer::new()?;
+        // In memory: the website's font choice, not Koharu's own config file.
+        let typesetting = Config::memory(self::typesetting(&current));
+        let renderer = Renderer::from_config(typesetting.clone())?;
         let rasterizer = Rasterizer::new()?;
         Ok(Self {
             pipeline,
@@ -127,6 +229,9 @@ impl KoharuEngine {
             target: tokio::sync::Mutex::new(target),
             renderer,
             rasterizer,
+            typesetting,
+            settings,
+            applied: tokio::sync::Mutex::new(revision),
             stage_times: Arc::new(Mutex::new(Vec::new())),
         })
     }
@@ -211,6 +316,34 @@ impl KoharuEngine {
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
         *current = target;
+        Ok(())
+    }
+
+    /// Applies settings changed on the website since the last page. Like a target
+    /// change, Koharu rebuilds its stage runner, so changed models load with this page.
+    async fn ensure_settings(&self) -> Result<()> {
+        let mut applied = self.applied.lock().await;
+        let (current, revision) = self.settings.current();
+        if *applied == revision {
+            return Ok(());
+        }
+        println!(
+            "Settings changed (OCR {}, inpainting {}, translation {}); models reload with this page.",
+            current.ocr, current.inpainting, current.llm
+        );
+        {
+            let mut config = self.config.write()?;
+            apply_settings(&mut config, &current);
+        }
+        {
+            let mut fonts = self.typesetting.write()?;
+            *fonts = typesetting(&current);
+        }
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        *applied = revision;
         Ok(())
     }
 
@@ -328,6 +461,61 @@ fn has_text(snapshot: &Snapshot, page: EntityId) -> bool {
     })
 }
 
+/// Puts back text colors that Koharu's detection snapped away (see
+/// [`crate::text_color`]), measured on the original page. Returns how many
+/// text layers changed.
+async fn fix_text_colors(session: &mut Session, page: EntityId, original: &DynamicImage) -> Result<usize> {
+    let snapshot = session.snapshot();
+    let rgba = original.to_rgba8();
+    let mut changes = Vec::new();
+    for entity in snapshot.descendants(page)? {
+        let layer = entity.id();
+        let Some(typography) = snapshot.component::<Typography>(layer)? else {
+            continue;
+        };
+        let Some(content) = snapshot.relations_from_as::<Presents>(layer).next() else {
+            continue;
+        };
+        let Some(region) = snapshot.relation_from::<RecognizedFrom>(content.value().target)? else {
+            continue;
+        };
+        let Some(geometry) = snapshot.component::<Geometry>(region.value().target)? else {
+            continue;
+        };
+        let Some(bbox) = bounding_box(&geometry) else {
+            continue;
+        };
+        let current = typography.color.map_or([0, 0, 0], |[r, g, b, _]| [r, g, b]);
+        if let Some([r, g, b]) = crate::text_color::corrected_color(&rgba, bbox, current) {
+            changes.push((layer, Typography { color: Some([r, g, b, u8::MAX]), ..typography }));
+        }
+    }
+    if changes.is_empty() {
+        return Ok(0);
+    }
+    let count = changes.len();
+    let patch = snapshot.patch(|edit| {
+        for (layer, typography) in &changes {
+            edit.set(*layer, typography)?;
+        }
+        Ok(())
+    })?;
+    session.commit(patch).await?;
+    Ok(count)
+}
+
+/// The integer pixel box `[left, top, right, bottom)` around a region outline.
+fn bounding_box(geometry: &Geometry) -> Option<[u32; 4]> {
+    let xs = geometry.points.iter().map(|point| point.x);
+    let ys = geometry.points.iter().map(|point| point.y);
+    let left = xs.clone().fold(f64::INFINITY, f64::min).floor().max(0.0);
+    let right = xs.fold(f64::NEG_INFINITY, f64::max).ceil();
+    let top = ys.clone().fold(f64::INFINITY, f64::min).floor().max(0.0);
+    let bottom = ys.fold(f64::NEG_INFINITY, f64::max).ceil();
+    (right.is_finite() && bottom.is_finite() && right > left && bottom > top)
+        .then(|| [left as u32, top as u32, right as u32, bottom as u32])
+}
+
 fn encode_png(image: &DynamicImage) -> Result<Vec<u8>> {
     let rgba;
     let (bytes, color, width, height) = match image {
@@ -376,6 +564,9 @@ impl PageTranslator for KoharuEngine {
         self.ensure_target(target)
             .await
             .map_err(|error| EngineError::Failed(error.to_string()))?;
+        self.ensure_settings()
+            .await
+            .map_err(|error| EngineError::Failed(error.to_string()))?;
 
         let bytes = page.bytes.clone();
         let decoded = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes))
@@ -407,7 +598,7 @@ impl PageTranslator for KoharuEngine {
                 times.lock().unwrap().push((stage.to_string(), elapsed));
             }
         });
-        let (session, page_id) = self
+        let (mut session, page_id) = self
             .run_pipeline(source, media_type, &decoded, Some(progress))
             .await
             .map_err(|error| EngineError::Failed(format!("{error:#}")))?;
@@ -421,6 +612,10 @@ impl PageTranslator for KoharuEngine {
         }
 
         let started = Instant::now();
+        // Best effort: a failure here only means Koharu's own colors are used.
+        if let Err(error) = fix_text_colors(&mut session, page_id, &decoded).await {
+            tracing::warn!("text colors left as detected: {error:#}");
+        }
         let rendered = self
             .render(&session, page_id, &decoded)
             .await

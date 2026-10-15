@@ -24,6 +24,10 @@ class TranslationCache(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    /** For engines that return a finished page: only the image, the engine and the target language change it. */
+    fun pageKey(image: ByteArray, engineId: String, targetLanguage: String): String =
+        key(image, engineId, TranslationRequest(targetLanguage = targetLanguage, sourceLanguage = null))
+
     fun read(key: String): PageTranslation? {
         val file = File(dir, "$key.json").takeIf { it.isFile } ?: return null
         return try {
@@ -44,7 +48,8 @@ class TranslationCache(
     }
 
     /** Where the page rendered with [variant] settings goes; it may not exist yet. */
-    fun renderedFile(key: String, variant: String): File = File(dir, "$key-$variant.jpg")
+    fun renderedFile(key: String, variant: String, extension: String = "jpg"): File =
+        File(dir, "$key-$variant.$extension")
 
     /** Writes through a temporary file, so a crash never leaves a half-written page behind. */
     fun atomicWrite(target: File, write: (File) -> Unit) {

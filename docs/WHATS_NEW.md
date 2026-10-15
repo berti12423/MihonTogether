@@ -2,6 +2,15 @@
 
 The first section is what the app shows in its update screen (through `apk.json` on the website). Newest first; write for readers, not developers.
 
+## October 15, 2026: Translate on your PC from your phone (one-time reinstall)
+
+- **This update needs a one-time reinstall.** The app is signed with a new key, so Android can't install it over the old one. Your account, friends, messages and XP are safe on the server. Before you uninstall, save your library: More → Settings → Data and storage → Create backup, and keep the file. Then uninstall Mihon Together Dev, install the new app, and use Restore backup. Future updates install normally again.
+- **Translate raws with your PC from your phone:** with the Mihon Together Translator open on your Windows PC, choose My PC (Koharu) in the reader's translation settings, pick your PC and enter the code from its window. Pages are translated on your PC and come back to your phone over your Wi-Fi. Needs translator 0.2.0 or newer.
+- **Invisible mode now hides everything from friends:** your library, favorites, reading progress and activity too, not just your online status.
+- Translator settings on the website (mihontogether.web.app/translator): pick the translation model (it shows which ones fit your graphics card), add instructions like "keep honorifics", choose OCR and fonts.
+- Colored lettering, like red text in a black bubble, keeps its color in translations.
+- Turning off the global ranking now takes you off the older daily boards too.
+
 ## October 9, 2026: My library on the website
 
 - **Read your phone's library on your computer:** open mihontogether.web.app → My library, signed in to the same account. Covers, chapters and a full reader (long strip or pages, right-to-left, arrow keys), and your progress is saved on the phone.

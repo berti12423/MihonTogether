@@ -12,6 +12,11 @@ class TranslationPreferences(private val store: PreferenceStore) {
     val papagoSecret = store.getString(Preference.privateKey("translate_papago_secret"), "")
     val model = store.getString("translate_model", MODELS.first())
 
+    /** My PC (Koharu): the paired PC's address ("IP:port"), its name, and the token it gave this phone. */
+    val pcAddress = store.getString("translate_pc_address", "")
+    val pcName = store.getString("translate_pc_name", "")
+    val pcToken = store.getString(Preference.privateKey("translate_pc_token"), "")
+
     /** "" means detect. */
     val sourceLanguage = store.getString("translate_source", "")
     val targetLanguage = store.getString("translate_target", "en")
@@ -38,8 +43,25 @@ class TranslationPreferences(private val store: PreferenceStore) {
         papagoId = papagoId.get().trim(),
         papagoSecret = papagoSecret.get().trim(),
         allowMobileData = allowMobileData.get(),
+        pcAddress = pcAddress.get().trim(),
+        pcName = pcName.get().trim(),
+        pcToken = pcToken.get().trim(),
     )
 
+    /** Stores a pairing at once (the PC already knows the token); [save] leaves these fields alone. */
+    fun savePc(address: PcAddress, name: String, token: String) {
+        pcAddress.set(address.toString())
+        pcName.set(name.trim())
+        pcToken.set(token.trim())
+    }
+
+    fun clearPc() {
+        pcToken.set("")
+        pcName.set("")
+        pcAddress.set("")
+    }
+
+    /** Saves the dialog's choices. The PC pairing is stored separately by [savePc] and [clearPc]. */
     fun save(settings: TranslationSettings) {
         engine.set(settings.engine)
         geminiKey.set(settings.apiKey.trim())
@@ -70,6 +92,12 @@ class TranslationPreferences(private val store: PreferenceStore) {
         /** Gemini vision (own key): best quality, small daily free quota. */
         const val ENGINE_GEMINI = "gemini"
 
-        val ENGINES = listOf(ENGINE_ON_DEVICE, ENGINE_DEEPL, ENGINE_PAPAGO, ENGINE_GEMINI)
+        /** The Mihon Together Translator (Koharu) on the user's own PC, over the home Wi-Fi. */
+        const val ENGINE_PC = PcTranslationEngine.ID
+
+        val ENGINES = listOf(ENGINE_ON_DEVICE, ENGINE_DEEPL, ENGINE_PAPAGO, ENGINE_GEMINI, ENGINE_PC)
+
+        /** Engines that keep pages on the user's own devices (phone or paired PC); these may run in incognito. */
+        fun isLocal(engine: String): Boolean = engine == ENGINE_ON_DEVICE || engine == ENGINE_PC
     }
 }

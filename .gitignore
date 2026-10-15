@@ -36,3 +36,4 @@ backend/.env.*
 # Discord Social SDK (proprietary; downloaded by the developer, never committed)
 third_party/discord-social-sdk/
 app/.cxx/
+graphify-out/

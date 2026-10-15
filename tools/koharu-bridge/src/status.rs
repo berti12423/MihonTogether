@@ -39,6 +39,8 @@ pub struct Models {
     pub ocr: String,
     pub inpainting: String,
     pub llm: String,
+    /// Fingerprint of the website's settings (see `settings::Settings::fingerprint`).
+    pub settings: String,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +108,10 @@ impl Status {
 
     pub fn set_device(&self, device: String) {
         self.update(|s| s.device = device);
+    }
+
+    pub fn set_models(&self, models: Models) {
+        self.update(|s| s.models = models);
     }
 
     pub fn set_last_page_ms(&self, ms: u64) {

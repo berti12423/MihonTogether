@@ -31,6 +31,16 @@ class BitmapPageImages : PageImages {
         return if (options.outWidth > 0 && options.outHeight > 0) options.outWidth to options.outHeight else null
     }
 
+    /** The page as lossless PNG, for receivers that can't read its format (the PC translator and AVIF). */
+    fun toPng(image: ByteArray): ByteArray? {
+        val bitmap = BitmapFactory.decodeByteArray(image, 0, image.size) ?: return null
+        return try {
+            java.io.ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
     override fun encodeSlice(image: ByteArray, slice: Slice, format: ImageFormat): ByteArray {
         val decoder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             BitmapRegionDecoder.newInstance(image, 0, image.size)

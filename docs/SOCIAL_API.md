@@ -30,7 +30,7 @@ Unknown fields are rejected. UID: 1–128 characters; display name: 1–40; hand
 | `socialUpdateProfile` | `{operationId,handle,displayName}` | `{profile:Profile}` |
 | `socialLookupHandle` | `{handle}` | `{profile:Profile}` |
 | `socialFriendAction` | `{operationId,action:request|accept|reject|cancel|remove|block|unblock,otherUid}` | `{requestId:null|string,state:string}` |
-| `socialGetFriend` | `{otherUid}` | `{profile:Profile,sharing:{generation,library,favorites,activity,presence,lastSeen,feed}}` (presence/lastSeen/feed report private while invisible) |
+| `socialGetFriend` | `{otherUid}` | `{profile:Profile,sharing:{generation,library,favorites,activity,presence,lastSeen,feed}}` (every category reports private while invisible, since 2026-10-14) |
 | `socialUpdateSharing` | `{operationId,expectedGeneration,settings:{library,favorites,activity,presence,lastSeen,feed,invisible},hideContentKey:null|string}` | `{settings:SharingSettings}` |
 | `socialPublishEntries` | `{operationId,generation,kind:library|favorites,entries:[Content],deleteKeys:[string]}` | `{generation,published:number,deleted:number}` |
 | `socialPublishActivity` | `{operationId,generation,activity:null|{content,chapterKey,chapterLabel}}` | `{expiresAt:null|number}` |
@@ -106,7 +106,7 @@ Profiles gain `bio` (one line, ≤160 characters), `accent` (0–7) and optional
 
 `sharingSettings.globalRanking` (boolean, **absent means true**: the one switch that starts on, by Berti's decision; the app shows a one-time notice with an opt-out). `socialUpdateSharing` accepts it as an optional extra field in `settings`; leaving it out keeps the current value, so older clients still work.
 
-`socialRecordChapter` now counts when `stats=friends` **or** the user is ranked globally (`globalRanking` not false and not invisible). When ranked, it also upserts `leaderboards/{yyyymmdd}`: `{schemaVersion, day, entries: {uid: {handle, displayName, accent, chapters, streak, updatedAt}}, updatedAt, expiresAt}`, kept to the top 50 (lowest count drops; among ties the latest arrival). Opting out or going invisible removes the entry at once; renaming or a new accent updates it; account deletion removes today's and yesterday's entries. Rules: any signed-in user may read `leaderboards/*`; nobody may write. Pages are never on the board.
+`socialRecordChapter` now counts when `stats=friends` **or** the user is ranked globally (`globalRanking` not false and not invisible). When ranked, it also upserts `leaderboards/{yyyymmdd}`: `{schemaVersion, day, entries: {uid: {handle, displayName, accent, chapters, streak, updatedAt}}, updatedAt, expiresAt}`, kept to the top 50 (lowest count drops; among ties the latest arrival). Opting out or going invisible removes the entry at once from the all-time board and every daily board still kept (8 days); renaming or a new accent updates it; account deletion removes today's and yesterday's entries. Rules: any signed-in user may read `leaderboards/*`; nobody may write. Pages are never on the board.
 
 Android: Today's ranking has **Friends** and **Global** tabs and shows chapters only. Tapping a friend opens their profile; tapping anyone else opens a public card (name, handle, today's chapters, streak) with **Add friend** (a request by handle). Blocked accounts are hidden from the global tab.
 
@@ -254,3 +254,15 @@ Both `socialMessage` and `socialGroupChat` gain three optional input fields. Old
 - **Reply**: `xp` adds `challenges: [ids completed by this chapter]`, `challengeXp` and `season` (badge id or null). `gained` now includes `challengeXp`; `unlocked` still lists `BADGES` ids only. Replays return the stored reply and award nothing.
 - **Rules** unchanged (`xp/{uid}` owner + friends sharing stats). The "Finish 3 series" idea isn't a challenge: the server can't tell when a series is finished without a new client signal.
 - **Mirrors**: the app's `XpRules` and web `logic.ts` copy these numbers; `XP rules table` (backend test), `XpRulesTest` (app) and `logic.test.mjs` (web) assert the same literal list, so any drift fails a test.
+
+### Invisible hides everything (2026-10-14)
+
+Berti's decision: invisible mode hides everything from friends, not only presence. `socialGetFriend` reports every visibility category as `private` while the owner is invisible; `socialPublishActivity` refuses a new activity while invisible (clearing still works); the rules add `invisible != true` to `projection()` (shared library, favorites, feed, daily stats) and to `activities`, and `storage.rules` hides cover thumbnails. Going invisible already bumped the generation (hiding older projections); this also covers anything republished while invisible. Reviews, XP, presence, last seen, open rooms and the ranking were already hidden.
+
+### Ranking boards off the chapter's transaction (2026-10-14)
+
+`socialRecordChapter` no longer touches `leaderboards/*` inside its transaction (Firestore's server SDK locks every document a transaction reads, so every ranked chapter used to contend on the same two documents). After the chapter commits, plain reads decide whether the reader is on the day's or the all-time board or would enter it (`boardWants`: listed already, room left, or a score beating the last entry; a newcomer loses ties), and only then a small transaction rechecks consent (`rankedGlobally`, matching generation) and updates those boards. A failed board update is logged and never fails the chapter; the next counted chapter places the reader again. The board contents and order are unchanged.
+
+### Account deletion and rooms (2026-10-14)
+
+Account deletion leaves each room first, through the same logic as `leave` (`SocialService.departRoom`, without the friendship checks, since the account's edges may already be going): a member is removed, a host hands over to the longest-present member, and a room with fewer than two people left ends. Only rooms that ended are removed entirely (room, lease, chat, every participant's index entry); a room others are still in carries on, and the deleted user's old chat lines stay until the room closes, like group chats.

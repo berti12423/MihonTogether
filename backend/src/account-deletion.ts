@@ -1,7 +1,7 @@
 import { Auth } from "firebase-admin/auth";
 import { Database } from "firebase-admin/database";
 import { FieldPath, FieldValue, Firestore, Timestamp } from "firebase-admin/firestore";
-import { ALL_TIME_BOARD, CHAT_TTL, pairId, ROOM_MESSAGE_SLOTS, statsDay } from "./domain.js";
+import { ALL_TIME_BOARD, CHAT_TTL, pairId, rankingDays, ROOM_MESSAGE_SLOTS } from "./domain.js";
 
 /** Owner-keyed subtrees removed wholesale (every document below them belongs to the user). */
 const OWNED_TREES = ["sharedLibraries", "sharedFavorites", "feeds", "hiddenTitles", "operations", "friendships", "blocks", "roomInvites",
@@ -14,23 +14,22 @@ const OWNED_DOCS = ["profiles", "accounts", "sharingSettings", "activities", "pr
 /**
  * Deletes everything the backend stores about [uid], then the Auth user. Other users keep their own records
  * (e.g. their block list entry for this now-meaningless uid), but nothing that identifies or describes the user.
- * Order: revoke relationships first (so friends lose access immediately), then owned data, then Auth.
+ * Order: leave rooms (others keep reading), revoke relationships (friends lose access at once), owned data, then Auth.
+ * [departRoom] is `SocialService.departRoom` for this user: it leaves a room like `leave` and says whether it ended.
  */
-export async function deleteAccount(db: Firestore, rtdb: Database, auth: Auth, uid: string): Promise<void> {
+export async function deleteAccount(db: Firestore, rtdb: Database, auth: Auth, uid: string,
+  departRoom: (roomId: string) => Promise<{ closed: boolean }>): Promise<void> {
   const profile = (await db.doc(`profiles/${uid}`).get()).data();
 
-  // Reciprocal friendship edges and both sides of pending/old requests.
-  const friends = await db.collection(`friendships/${uid}/accepted`).get();
-  for (const friend of friends.docs) await db.doc(`friendships/${friend.id}/accepted/${uid}`).delete();
-  for (const field of ["senderUid", "recipientUid"]) {
-    const requests = await db.collection("friendRequests").where(field, "==", uid).get();
-    for (const request of requests.docs) await request.ref.delete();
-  }
-
-  // Rooms the user took part in: remove the room, its lease, chat and the other participant's index entry.
+  // Rooms first: a room others are still in carries on without the user (a host hands over); a room that ended is
+  // removed entirely: the room, its lease, its chat and every participant's index entry.
   const invites = await db.collection(`roomInvites/${uid}/items`).get();
   for (const invite of invites.docs) {
-    const roomId = invite.id, room = (await db.doc(`rooms/${roomId}`).get()).data();
+    const roomId = invite.id;
+    const { closed } = await departRoom(roomId);
+    await db.doc(`roomChatRates/${roomId}/users/${uid}`).delete();
+    if (!closed) continue;
+    const room = (await db.doc(`rooms/${roomId}`).get()).data();
     for (const participant of (room?.participants as string[] | undefined) ?? []) {
       if (participant !== uid) await db.doc(`roomInvites/${participant}/items/${roomId}`).delete();
       await db.doc(`roomChatRates/${roomId}/users/${participant}`).delete();
@@ -43,8 +42,16 @@ export async function deleteAccount(db: Firestore, rtdb: Database, auth: Auth, u
     await batch.commit();
   }
 
-  // Global ranking entries (today's and yesterday's boards can still be shown, and the all-time board).
-  for (const day of [statsDay(Date.now()), statsDay(Date.now() - 86_400_000), ALL_TIME_BOARD]) {
+  // Reciprocal friendship edges and both sides of pending/old requests.
+  const friends = await db.collection(`friendships/${uid}/accepted`).get();
+  for (const friend of friends.docs) await db.doc(`friendships/${friend.id}/accepted/${uid}`).delete();
+  for (const field of ["senderUid", "recipientUid"]) {
+    const requests = await db.collection("friendRequests").where(field, "==", uid).get();
+    for (const request of requests.docs) await request.ref.delete();
+  }
+
+  // Global ranking entries: every daily board that still exists (readable by any signed-in user) and the all-time one.
+  for (const day of [...rankingDays(Date.now()), ALL_TIME_BOARD]) {
     const board = db.doc(`leaderboards/${day}`);
     if ((await board.get()).exists) await board.update(new FieldPath("entries", uid), FieldValue.delete());
   }

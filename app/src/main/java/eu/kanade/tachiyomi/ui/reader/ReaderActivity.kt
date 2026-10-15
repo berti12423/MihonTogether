@@ -272,6 +272,9 @@ class ReaderActivity : BaseActivity() {
                         finish()
                     }
                     is ReaderViewModel.Event.TranslationNotReady -> toast(MR.strings.translate_edit_not_ready)
+                    is ReaderViewModel.Event.TranslationEditUnavailable -> toast(
+                        MR.strings.translate_pc_edit_unavailable,
+                    )
                     is ReaderViewModel.Event.TranslationSentToRoom -> toast(MR.strings.translate_edit_sent)
                     is ReaderViewModel.Event.TranslationIncognito -> {
                         toast(MR.strings.translate_incognito)
@@ -378,6 +381,7 @@ class ReaderActivity : BaseActivity() {
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(bottom = 40.dp),
+                onRetry = viewModel::retryTranslation,
             )
 
             ReadingTogetherPrompt(
@@ -410,6 +414,7 @@ class ReaderActivity : BaseActivity() {
                     onSave = viewModel::saveTranslationSettings,
                     onOpenUrl = { openInBrowser(it) },
                     onDismiss = onDismissRequest,
+                    pcSection = { mihon.feature.translate.PcTranslatorSettings(viewModel.pcPairing) },
                 )
             }
             is ReaderViewModel.Dialog.EditTranslation -> {

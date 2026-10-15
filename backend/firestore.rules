@@ -101,8 +101,9 @@ service cloud.firestore {
         after.diff(before).affectedKeys().hasOnly(['position','sequence','writerSessionId','updatedAt']) &&
         validPosition(after.position) && after.sequence == before.sequence + 1 && after.updatedAt == request.time;
     }
+    // Invisible hides every projection from friends (Berti's decision, 2026-10-14).
     function projection(uid, field) {
-      return shares(uid, field) && resource.data.generation == sharing(uid).generation;
+      return shares(uid, field) && resource.data.generation == sharing(uid).generation && sharing(uid).invisible != true;
     }
 
     match /profiles/{uid} { allow read: if owner(uid) || friends(request.auth.uid, uid); }
@@ -119,7 +120,7 @@ service cloud.firestore {
     match /sharedFavorites/{uid}/entries/{key} { allow read: if owner(uid) || projection(uid, 'favorites'); }
     match /activities/{uid} {
       // An authorized absent document is a cleared activity, allowing the listener to resume publication.
-      allow read: if owner(uid) || (shares(uid, 'activity') &&
+      allow read: if owner(uid) || (shares(uid, 'activity') && sharing(uid).invisible != true &&
         (!exists(/databases/$(database)/documents/activities/$(uid)) ||
           (resource.data.generation == sharing(uid).generation && resource.data.expiresAt > request.time)));
     }

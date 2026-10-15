@@ -380,6 +380,9 @@ test('account deletion removes the user, their projections, relationships, rooms
   const room = await a.call('socialRoomAction', roomInput('create', { otherUid: b.uid, sessionId: op(), content: content(1) }));
   await b.call('socialRoomAction', roomInput('join', { roomId: room.roomId }));
   await b.call('socialRoomMessage', { operationId: op(), roomId: room.roomId, kind: 'text', text: 'hi', emoji: null });
+  // A daily board from three days ago is still readable by everyone, so deletion must clear it too.
+  const olderBoard = `leaderboards/${statsDay(Date.now() - 3 * 86_400_000)}`;
+  await adminDb.doc(olderBoard).set({ schemaVersion: 1, entries: { [a.uid]: { handle: a.handle, chapters: 1 }, [b.uid]: { handle: b.handle, chapters: 2 } } });
   await callableFails(a.call('socialDeleteAccount', {}), 'invalid-argument');
   await callableFails(a.call('socialDeleteAccount', { confirm: 'delete' }), 'invalid-argument');
   assert.deepEqual(await a.call('socialDeleteAccount', { confirm: 'DELETE' }), { deleted: true });
@@ -389,6 +392,7 @@ test('account deletion removes the user, their projections, relationships, rooms
     `friendships/${b.uid}/accepted/${a.uid}`, `friendships/${a.uid}/accepted/${b.uid}`, `friendRequests/${pairId(a.uid, c.uid)}`,
     `rooms/${room.roomId}`, `roomInvites/${b.uid}/items/${room.roomId}`, `rooms/${room.roomId}/messages/000`, `roomChat/${room.roomId}`]) await gone(path);
   assert.equal((await adminDb.collection(`operations/${a.uid}/items`).get()).size, 0);
+  assert.deepEqual(Object.keys((await adminDb.doc(olderBoard).get()).data().entries), [b.uid]);
   await assert.rejects(adminAuth(adminApp).getUser(a.uid), (error) => error.code === 'auth/user-not-found');
   // The handle is free again and the friend keeps a working account.
   await assertSucceeds(getDoc(doc(b.db, `profiles/${b.uid}`)));
@@ -773,4 +777,37 @@ test('web library signaling is owner-only, shape-checked, short-lived and leaves
 
   assert.deepEqual(await a.call('socialDeleteAccount', { confirm: 'DELETE' }), { deleted: true });
   for (const path of [`libraryHosts/${a.uid}/phones/${deviceId}`, linkPath]) assert.equal((await adminDb.doc(path).get()).exists, false, path);
+});
+test('invisible hides a library published while invisible, and an activity written for it', async () => {
+  const { a, b } = await fixture(); await befriend(a, b);
+  await share(a, { library: 'friends', activity: 'friends', invisible: true });
+  // The app's Publish button still works while invisible; friends must not see the result.
+  await a.call('socialPublishEntries', { operationId: op(), generation: 2, kind: 'library', entries: [content(1)], deleteKeys: [] });
+  await assertSucceeds(getDocFromServer(doc(a.db, `sharedLibraries/${a.uid}/entries/${content(1).contentKey}`)));
+  await assertFails(getDocFromServer(doc(b.db, `sharedLibraries/${a.uid}/entries/${content(1).contentKey}`)));
+  // Even an activity written directly (older server, race) stays hidden while invisible.
+  await adminDb.doc(`activities/${a.uid}`).set({ schemaVersion: 1, content: content(1), chapterKey: content(2).contentKey, chapterLabel: 'Ch.1',
+    generation: 2, updatedAt: Date.now(), expiresAt: Timestamp.fromMillis(Date.now() + 120_000) });
+  await assertFails(getDocFromServer(doc(b.db, `activities/${a.uid}`)));
+  // Back to visible: a deliberate republish is readable again.
+  await share(a, { library: 'friends', activity: 'friends' }, 2);
+  await a.call('socialPublishEntries', { operationId: op(), generation: 3, kind: 'library', entries: [content(1)], deleteKeys: [] });
+  await assertSucceeds(getDocFromServer(doc(b.db, `sharedLibraries/${a.uid}/entries/${content(1).contentKey}`)));
+});
+test('deleting an account leaves a room of three going for the other two', async () => {
+  const { a, b, c } = await fixture(); await befriend(a, b); await befriend(a, c);
+  const room = await a.call('socialRoomAction', roomInput('create', { otherUid: b.uid, sessionId: op(), content: content(1) }));
+  await a.call('socialRoomAction', roomInput('invite', { roomId: room.roomId, otherUid: c.uid }));
+  await b.call('socialRoomAction', roomInput('join', { roomId: room.roomId }));
+  await c.call('socialRoomAction', roomInput('join', { roomId: room.roomId }));
+  assert.deepEqual(await c.call('socialDeleteAccount', { confirm: 'DELETE' }), { deleted: true });
+  const after = (await adminDb.doc(`rooms/${room.roomId}`).get()).data();
+  assert.equal(after.state, 'active');
+  assert.deepEqual(after.participants, [a.uid, b.uid]);
+  assert.equal(after.members[c.uid], undefined);
+  assert.equal((await adminDb.doc(`roomInvites/${b.uid}/items/${room.roomId}`).get()).data().state, 'active');
+  assert.equal((await adminDb.doc(`roomInvites/${c.uid}/items/${room.roomId}`).get()).exists, false);
+  // The two who stay can still read the room and chat in it.
+  await assertSucceeds(getDocFromServer(doc(b.db, `rooms/${room.roomId}`)));
+  await b.call('socialRoomMessage', { operationId: op(), roomId: room.roomId, kind: 'text', text: 'still here', emoji: null });
 });

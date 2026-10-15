@@ -36,11 +36,29 @@ class PageTranslator(
         glossary: Glossary = Glossary.EMPTY,
     ): Result? {
         val (width, height) = images.size(image) ?: return null
+        if (engine is PageRenderingEngine) return renderWholePage(image, engine, request.targetLanguage)
         val key = cache.key(image, engine.id, request)
         val translation = cache.read(key) ?: translateSlices(image, width, height, engine, request).also {
             cache.write(key, it)
         }
         return Result(render(image, key, translation, includeSfx, glossary), translation, key)
+    }
+
+    /**
+     * The page as the engine drew it, cached by image, engine and target language, so a page is never sent twice.
+     * The translation has no blocks: the engine's image is the result.
+     */
+    private suspend fun renderWholePage(image: ByteArray, engine: PageRenderingEngine, target: String): Result {
+        val key = cache.pageKey(image, engine.id, target)
+        val rendered = cache.renderedFile(key, "page", extension = "png")
+        if (rendered.isFile) {
+            cache.touch(rendered)
+        } else {
+            val png = engine.renderPage(image, target)
+            cache.atomicWrite(rendered) { it.writeBytes(png) }
+            cache.afterWrite()
+        }
+        return Result(rendered, PageTranslation(blocks = emptyList(), engine = engine.id), key)
     }
 
     /** Stores the reader's edits of a page's translation (under its [cacheKey]) and draws the page again. */

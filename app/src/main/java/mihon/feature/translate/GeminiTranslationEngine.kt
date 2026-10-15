@@ -49,6 +49,17 @@ interface TranslationEngine {
 }
 
 /**
+ * An engine that draws the finished page itself (the PC translator): it gets the whole original page and returns the
+ * translated image. There are no text blocks, so nothing can be edited or redrawn with a glossary.
+ */
+interface PageRenderingEngine : TranslationEngine {
+    suspend fun renderPage(image: ByteArray, targetLanguage: String): ByteArray
+
+    override suspend fun translate(image: ByteArray, mimeType: String, request: TranslationRequest): EngineResult =
+        throw UnsupportedOperationException("$id renders whole pages")
+}
+
+/**
  * Gemini vision via the Interactions REST API with the reader's own key: one request per image returns every text
  * region with its box and translation as structured JSON (validated in tools/translate-spike). Requests use
  * `store: false`; nothing is retried here, because on the free tier retries burn the daily quota.

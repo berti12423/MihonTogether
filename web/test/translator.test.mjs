@@ -338,3 +338,123 @@ test("the translate switch is remembered per title and survives missing storage"
 test("/translator is a known route", () => {
   assert.ok(logic.knownRoute("/translator"));
 });
+
+// Translator settings (/translator page, GET/PUT /settings on translator 0.2.0+).
+const ts = await load("src/weblibrary/translator-settings.ts");
+const SETTINGS = { ocr: "paddleocr-vl-1.6", inpainting: "lama", llm: "gemma4-12b-it", instructions: "", temperature: null, topP: null,
+  topK: null, maxTokens: null, repeatPenalty: null, reasoning: true, vision: true, fonts: [] };
+const settingsBody = (settings = SETTINGS) => ({
+  settings, defaults: SETTINGS,
+  options: {
+    ocr: [{ id: "paddleocr-vl-1.6", name: "PaddleOCR-VL 1.6" }, { id: "manga-ocr", name: "Manga OCR" }],
+    inpainting: [{ id: "lama", name: "LaMa" }],
+    llm: [{ id: "gemma4-12b-it", name: "Gemma 4 12B", vision: true, reasoning: true }, { id: "qwen3.5-9b", name: "Qwen 3.5 9B", vision: false, reasoning: true }],
+    maxInstructions: 2000, maxFonts: 8,
+  },
+});
+
+test("settings answers are parsed and checked", () => {
+  const info = ts.parseSettingsInfo(settingsBody());
+  assert.equal(info.settings.llm, "gemma4-12b-it");
+  assert.equal(info.options.llm[1].vision, false);
+  assert.equal(info.options.maxFonts, 8);
+  assert.equal(ts.parseSettingsInfo({ settings: { ocr: 1 } }), null);
+  assert.equal(ts.parseSettingsInfo(null), null);
+  assert.equal(ts.parseSettingsInfo({ ...settingsBody(), options: null }), null);
+});
+
+test("font lists and optional numbers come from the form as the translator expects", () => {
+  assert.deepEqual(ts.parseFonts(" Anime Ace 2.0 BB, Comic Sans MS\nAnime Ace 2.0 BB,, "), ["Anime Ace 2.0 BB", "Comic Sans MS"]);
+  assert.deepEqual(ts.parseFonts(""), []);
+  assert.equal(ts.parseOptionalNumber(""), null);
+  assert.equal(ts.parseOptionalNumber(" 0.3 "), 0.3);
+  assert.equal(ts.parseOptionalNumber("abc"), undefined);
+  assert.equal(ts.parseOptionalNumber("1.5", true), undefined);
+  assert.equal(ts.parseOptionalNumber("40", true), 40);
+});
+
+test("saving PUTs JSON to the local translator and returns the saved settings", async () => {
+  const changed = { ...SETTINGS, llm: "qwen3.5-9b", instructions: "Keep honorifics." };
+  const fetcher = fakeFetch((url, init) => {
+    assert.equal(url, `${t.TRANSLATOR_URL}/settings`);
+    assert.equal(init.method, "PUT");
+    assert.equal(init.headers["Content-Type"], "application/json");
+    return json(200, settingsBody(JSON.parse(init.body)));
+  });
+  const info = await ts.saveSettings(changed, fetcher);
+  assert.equal(info.settings.llm, "qwen3.5-9b");
+  assert.equal(info.settings.instructions, "Keep honorifics.");
+});
+
+test("settings errors explain themselves", async () => {
+  await assert.rejects(ts.fetchSettings(fakeFetch(() => Promise.reject(new TypeError("offline")))), /isn't running/);
+  const old = await ts.fetchSettings(fakeFetch(() => json(404, { error: "not_found", message: "nope" }))).catch((e) => e);
+  assert.equal(old.missing, true);
+  assert.match(old.message, /no settings/);
+  await assert.rejects(ts.saveSettings(SETTINGS, fakeFetch(() => json(400, { error: "bad_settings", message: "Temperature must be between 0 and 2." }))),
+    /Temperature must be between 0 and 2/);
+  await assert.rejects(ts.fetchSettings(fakeFetch(() => json(200, { hello: 1 }))), /unexpected answer/);
+});
+
+test("a settings change gives translated pages a new cache key", async () => {
+  const bytes = page();
+  const a = await t.cacheKey(bytes, "en-US", { ...MODELS, settings: "aaaa1111" });
+  const b = await t.cacheKey(bytes, "en-US", { ...MODELS, settings: "bbbb2222" });
+  assert.notEqual(a, b);
+});
+
+// Which models fit the GPU (sizes from the translator; estimate measured on a 16 GB RTX 5070 Ti).
+const LLMS = [
+  { id: "gemma4-26b-a4b-it", name: "Gemma 4 26B A4B", vision: true, reasoning: true, sizeMb: 13589, projectorMb: 1138 },
+  { id: "gemma4-12b-it", name: "Gemma 4 12B", vision: true, reasoning: true, sizeMb: 6406, projectorMb: 168 },
+  { id: "gemma4-e4b-it", name: "Gemma 4 E4B", vision: true, reasoning: true, sizeMb: 4021, projectorMb: 945 },
+  { id: "gemma4-e2b-it", name: "Gemma 4 E2B", vision: true, reasoning: true, sizeMb: 2499, projectorMb: 940 },
+  { id: "qwen3.5-2b", name: "Qwen 3.5 2B", vision: true, reasoning: true, sizeMb: 1280, projectorMb: 635 },
+  { id: "mystery", name: "Mystery", vision: false, reasoning: false, sizeMb: null, projectorMb: null },
+];
+const GPU16 = { name: "NVIDIA GeForce RTX 5070 Ti", vramMb: 16303 };
+
+test("the memory estimate matches the measured default model", () => {
+  const need = ts.neededMb(LLMS[1], true);
+  assert.ok(Math.abs(need - 10104) < 300, `estimated ${need} MB, measured 10104 MB`);
+  assert.ok(ts.neededMb(LLMS[2], false) < ts.neededMb(LLMS[2], true), "the projector only counts with the page image on");
+  assert.equal(ts.neededMb(LLMS[5], true), null);
+});
+
+test("models are sorted into fits, tight and too big for the GPU", () => {
+  assert.equal(ts.fitFor(10_000, GPU16), "fits");
+  assert.equal(ts.fitFor(15_500, GPU16), "tight");
+  assert.equal(ts.fitFor(19_000, GPU16), "too_big");
+  assert.equal(ts.fitFor(null, GPU16), "unknown");
+  assert.equal(ts.fitFor(5_000, null), "unknown");
+  assert.equal(ts.fitFor(ts.neededMb(LLMS[0], true), GPU16), "too_big", "26B doesn't fit 16 GB with the pipeline");
+});
+
+test("the recommendation is the best model that fits comfortably", () => {
+  assert.equal(ts.recommendedModel(LLMS, GPU16, true).id, "gemma4-12b-it");
+  assert.equal(ts.recommendedModel(LLMS, { name: "RTX 4090", vramMb: 24564 }, true).id, "gemma4-26b-a4b-it");
+  // 6 GB: nothing fits with room to spare, so the best tight fit.
+  assert.equal(ts.recommendedModel(LLMS, { name: "RTX 3060 Laptop", vramMb: 6144 }, true).id, "qwen3.5-2b");
+  // 8 GB: a model with room to spare beats a bigger one that only just fits.
+  assert.equal(ts.recommendedModel(LLMS, { name: "RTX 4060", vramMb: 8188 }, true).id, "qwen3.5-2b");
+  assert.equal(ts.recommendedModel(LLMS, { name: "GTX 1050", vramMb: 2048 }, true), null);
+  assert.equal(ts.recommendedModel(LLMS, null, true).id, "gemma4-e2b-it", "no NVIDIA GPU: a small model for the processor");
+});
+
+test("model labels say whether each one fits", () => {
+  assert.match(ts.modelLabel(LLMS[1], GPU16, true), /^Gemma 4 12B — fits your GPU \(about 9\.9 GB\)$/);
+  assert.match(ts.modelLabel(LLMS[0], GPU16, true), /too big for your GPU/);
+  assert.match(ts.modelLabel(LLMS[1], null, true), /^Gemma 4 12B \(about 9\.9 GB\)$/);
+  assert.equal(ts.modelLabel(LLMS[5], GPU16, true), "Mystery");
+});
+
+test("settings answers carry the GPU and model sizes", () => {
+  const body = settingsBody();
+  body.options.gpu = { name: "RTX", vramMb: 8192 };
+  body.options.llm[0].sizeMb = 6406;
+  const info = ts.parseSettingsInfo(body);
+  assert.deepEqual(info.options.gpu, { name: "RTX", vramMb: 8192 });
+  assert.equal(info.options.llm[0].sizeMb, 6406);
+  assert.equal(info.options.llm[1].sizeMb, null);
+  assert.equal(ts.parseSettingsInfo({ ...settingsBody(), options: { ...settingsBody().options, gpu: { name: "x", vramMb: -1 } } }).options.gpu, null);
+});

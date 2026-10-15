@@ -1,6 +1,7 @@
 // /translator: what the Mihon Together Translator is, how to get it, and a live status line from its /health.
 import { h, replace } from "../dom";
 import { healthText, pageTranslator } from "./translator";
+import { settingsCard } from "./translator-settings";
 
 declare const __DEV_TOOLS__: boolean;
 
@@ -10,12 +11,22 @@ const KOHARU_URL = "https://github.com/koharu-rs/koharu";
 /** Fills [container] with the setup page; returns how to stop its status polling. */
 export function translatorSetup(container: HTMLElement, options: { link: (path: string, label: string) => HTMLElement; githubUrl: string }): () => void {
   const status = h("div", { role: "status" });
+  // Shown once the translator is ready; kept (not rebuilt) while it stays up, so edits aren't lost.
+  const settingsBox = h("div");
+  let settingsShown = false;
   let stop = () => undefined as void;
   const watch = () => {
     stop();
     const translator = pageTranslator();
     const draw = () => {
       const state = translator.state;
+      if (state === "ready" && !settingsShown) {
+        settingsShown = true;
+        replace(settingsBox, settingsCard(() => { void translator.check(); }));
+      } else if (state === "absent" && settingsShown) {
+        settingsShown = false;
+        replace(settingsBox);
+      }
       const health = translator.health;
       const p = health?.progress;
       const dot = state === "ready" ? "dot on" : state === "absent" || state === "error" ? "dot bad" : "dot wait";
@@ -60,6 +71,6 @@ export function translatorSetup(container: HTMLElement, options: { link: (path: 
     h("h3", {}, "Credits"),
     h("p", { class: "small" }, "Translation is done by ", h("a", { href: KOHARU_URL, target: "_blank", rel: "noopener" }, "Koharu"),
       ", an open-source manga translator, with its own models (detection, OCR, inpainting and a local language model). Mihon Together isn't affiliated with Koharu."),
-  ));
+  ), settingsBox);
   return () => stop();
 }

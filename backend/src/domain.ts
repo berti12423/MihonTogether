@@ -13,6 +13,8 @@ export interface Transaction {
 }
 export interface Store {
   transact<T>(body: (tx: Transaction) => Promise<T>): Promise<T>;
+  /** A plain read outside any transaction: no lock, so it never contends with writers of a busy document. */
+  read(path: string): Promise<Data | null>;
 }
 /** Read-only view of uploaded profile media (Cloud Storage in production, a fake in unit tests). */
 export interface MediaStore {
@@ -268,6 +270,26 @@ function boardMedia(profile: Data, settings: Data): Data {
     return rankingMedia(settings) && m && typeof m.version === "number" ? { version: m.version, contentType: m.contentType } : null;
   };
   return { avatar: pick(profile.avatar), banner: pick(profile.banner) };
+}
+/** Daily board order: most chapters first, the earlier arrival first among equals. */
+const byChapters = (a: Data, b: Data) => Number(b.chapters) - Number(a.chapters) || Number(a.updatedAt) - Number(b.updatedAt);
+/** All-time board order: most XP, then most lifetime chapters, then the earlier arrival. */
+const byXp = (a: Data, b: Data) =>
+  Number(b.xp) - Number(a.xp) || Number(b.chapters) - Number(a.chapters) || Number(a.updatedAt) - Number(b.updatedAt);
+/**
+ * Whether [actor] with [score] belongs on [board]: already on it (its entry must follow), the board has room, or the
+ * score beats the last entry. A newcomer arrives last, so it loses ties.
+ */
+export function boardWants(board: Data | null, actor: string, score: Data, order: (a: Data, b: Data) => number): boolean {
+  const entries = (board?.entries as Record<string, Data> | undefined) ?? {};
+  const listed = Object.values(entries);
+  if (Object.hasOwn(entries, actor) || listed.length < LEADERBOARD_SIZE) return true;
+  const last = listed.sort(order).at(-1)!;
+  return order({ ...score, updatedAt: Number.MAX_SAFE_INTEGER }, last) < 0;
+}
+/** The UTC days whose ranking boards may still exist: today and the [STATS_TTL] before it. */
+export function rankingDays(now: number): string[] {
+  return Array.from({ length: STATS_TTL / DAY + 1 }, (_, i) => statsDay(now - i * DAY));
 }
 export function statsDay(now: number): string { return new Date(now).toISOString().slice(0, 10).replaceAll("-", ""); }
 const ROOM_MESSAGES_PER_MINUTE = 30;
@@ -678,7 +700,8 @@ export class SocialService {
       const sharing: Data = { generation: settings.generation };
       // Settings written before a category existed lack the field: absent means private.
       for (const field of VISIBILITY_FIELDS) sharing[field] = settings[field] ?? "private";
-      if (settings.invisible) { sharing.presence = "private"; sharing.lastSeen = "private"; sharing.feed = "private"; sharing.stats = "private"; }
+      // Invisible hides everything friends could see (Berti's decision, 2026-10-14).
+      if (settings.invisible) for (const field of VISIBILITY_FIELDS) sharing[field] = "private";
       sharing.reviews = reviewsShared(settings);
       sharing.progress = progressShared(settings);
       return { profile, sharing };
@@ -770,7 +793,7 @@ export class SocialService {
     return this.mutation(actor, "socialPublishActivity", input, async (tx, now) => {
       if (!activity) { tx.delete(`activities/${actor}`); return { expiresAt: null }; }
       const settings = await this.settings(tx, actor, now);
-      check(settings.generation === gen && settings.activity === "friends", "failed-precondition", "Activity consent changed.");
+      check(settings.generation === gen && settings.activity === "friends" && !settings.invisible, "failed-precondition", "Activity consent changed.");
       const hidden = await tx.get(`hiddenTitles/${actor}/entries/${(activity.content as Data).contentKey as string}`);
       check(!hidden, "failed-precondition", "A hidden title cannot be published.");
       const expiresAt = now + 120_000;
@@ -830,6 +853,16 @@ export class SocialService {
     });
   }
   private async recordChapter(actor: string, raw: unknown): Promise<Data> {
+    const result = await this.countChapter(actor, raw);
+    // The two shared ranking documents are updated after the chapter commits, and only for a reader who is on a board
+    // or would enter it, so ordinary chapters never lock the documents everyone ranks on (audit finding 2). A failure
+    // here costs a ranking update, never the chapter; the next counted chapter places the reader again.
+    if (typeof result.chapters === "number") {
+      await this.rank(actor, String(result.day)).catch((error) => console.warn("Ranking update skipped", error));
+    }
+    return result;
+  }
+  private async countChapter(actor: string, raw: unknown): Promise<Data> {
     // roomId (optional): the room the chapter was read in, for the reading-together XP bonus.
     const inRoom = raw !== null && typeof raw === "object" && Object.hasOwn(raw, "roomId");
     const input = object(raw, ["operationId", "generation", "pages", ...(inRoom ? ["roomId"] : [])]), gen = generation(input.generation);
@@ -870,7 +903,6 @@ export class SocialService {
       const stats = { schemaVersion: 1, day, generation: gen, chapters: (same ? Number(current.chapters) : 0) + 1,
         pages: (same ? Number(current.pages) : 0) + pages, streak, updatedAt: now, expiresAt: now + STATS_TTL };
       tx.set(path, stats);
-      if (rankedGlobally(settings)) await this.placeOnLeaderboard(tx, actor, stats.chapters, streak, now, xp.level, xp.doc, settings);
       return { day, chapters: stats.chapters, pages: stats.pages, streak, xp: reward };
     });
   }
@@ -935,31 +967,55 @@ export class SocialService {
     return { doc, gained: gained + challengeXp, level, leveledUp: level > levelFor(before), unlocked, freezeUsed, challenges: completed, challengeXp, season };
   }
   /**
-   * Puts the actor on today's global ranking with only public fields (name, handle, accent, counts), keeping the
-   * top [LEADERBOARD_SIZE]: the lowest count drops out, and among equal counts the latest arrival.
+   * After a counted chapter: decides from plain (unlocked) reads whether the reader belongs on the day's board or the
+   * all-time board, and only then updates those boards in a small transaction of their own.
    */
-  private async placeOnLeaderboard(tx: Transaction, actor: string, chapters: number, streak: number, now: number, level: number, xp: Data, settings: Data): Promise<void> {
-    const allTimePath = `leaderboards/${ALL_TIME_BOARD}`;
-    const [profile, allTime] = await Promise.all([tx.get(`profiles/${actor}`), tx.get(allTimePath)]);
-    if (!profile) return;
-    const media = boardMedia(profile, settings);
-    // All time: by total XP (lifetime chapters as the tie-break), no expiry.
-    const lifetime: Record<string, Data> = { ...((allTime?.entries as Record<string, Data> | undefined) ?? {}) };
-    lifetime[actor] = { handle: profile.handle, displayName: profile.displayName, accent: profile.accent ?? 0, ...media, xp: Number(xp.total),
-      chapters: Number(xp.chapters), level, updatedAt: now };
-    const byXp = Object.entries(lifetime).sort(([, a], [, b]) =>
-      Number(b.xp) - Number(a.xp) || Number(b.chapters) - Number(a.chapters) || Number(a.updatedAt) - Number(b.updatedAt));
-    tx.set(allTimePath, { schemaVersion: 1, day: ALL_TIME_BOARD, entries: Object.fromEntries(byXp.slice(0, LEADERBOARD_SIZE)), updatedAt: now });
-    const day = statsDay(now), path = `leaderboards/${day}`, board = await tx.get(path);
-    const entries: Record<string, Data> = { ...((board?.entries as Record<string, Data> | undefined) ?? {}) };
-    entries[actor] = { handle: profile.handle, displayName: profile.displayName, accent: profile.accent ?? 0, ...media, chapters, streak, level, updatedAt: now };
-    const ordered = Object.entries(entries).sort(([, a], [, b]) =>
-      Number(b.chapters) - Number(a.chapters) || Number(a.updatedAt) - Number(b.updatedAt));
-    tx.set(path, { schemaVersion: 1, day, entries: Object.fromEntries(ordered.slice(0, LEADERBOARD_SIZE)), updatedAt: now, expiresAt: now + STATS_TTL });
+  private async rank(actor: string, day: string): Promise<void> {
+    const [daily, allTime, xp, stats] = await Promise.all([this.store.read(`leaderboards/${day}`),
+      this.store.read(`leaderboards/${ALL_TIME_BOARD}`), this.store.read(`xp/${actor}`), this.store.read(`dailyStats/${actor}/days/${day}`)]);
+    if (!xp || !stats) return;
+    const which = {
+      daily: boardWants(daily, actor, { chapters: Number(stats.chapters) }, byChapters),
+      allTime: boardWants(allTime, actor, { xp: Number(xp.total), chapters: Number(xp.chapters) }, byXp),
+    };
+    if (!which.daily && !which.allTime) return;
+    await this.store.transact((tx) => this.placeOnLeaderboard(tx, actor, day, this.clock(), which));
   }
-  /** Opting out (or going invisible) removes today's and the all-time entry at once. */
+  /**
+   * Puts the actor on the chosen boards with only public fields (name, handle, accent, counts), keeping the top
+   * [LEADERBOARD_SIZE]: the lowest score drops out, and among equal scores the latest arrival. Rechecks consent, since
+   * the reader may have opted out or gone invisible since the chapter counted.
+   */
+  private async placeOnLeaderboard(tx: Transaction, actor: string, day: string, now: number, which: { daily: boolean; allTime: boolean }): Promise<void> {
+    const [settings, profile, xp, stats] = await Promise.all([tx.get(`sharingSettings/${actor}`), tx.get(`profiles/${actor}`),
+      tx.get(`xp/${actor}`), tx.get(`dailyStats/${actor}/days/${day}`)]);
+    if (!settings || !profile || !xp || !rankedGlobally(settings)) return;
+    const media = boardMedia(profile, settings), level = Number(xp.level);
+    const allTimePath = `leaderboards/${ALL_TIME_BOARD}`, path = `leaderboards/${day}`;
+    const [allTime, board] = await Promise.all([which.allTime ? tx.get(allTimePath) : null, which.daily ? tx.get(path) : null]);
+    if (which.allTime) {
+      // All time: by total XP (lifetime chapters as the tie-break), no expiry.
+      const lifetime: Record<string, Data> = { ...((allTime?.entries as Record<string, Data> | undefined) ?? {}) };
+      lifetime[actor] = { handle: profile.handle, displayName: profile.displayName, accent: profile.accent ?? 0, ...media, xp: Number(xp.total),
+        chapters: Number(xp.chapters), level, updatedAt: now };
+      const ordered = Object.entries(lifetime).sort(([, a], [, b]) => byXp(a, b));
+      tx.set(allTimePath, { schemaVersion: 1, day: ALL_TIME_BOARD, entries: Object.fromEntries(ordered.slice(0, LEADERBOARD_SIZE)), updatedAt: now });
+    }
+    // The day's board shows the day's public counter, which a privacy change restarts (the generation must match).
+    if (which.daily && stats && stats.generation === settings.generation) {
+      const entries: Record<string, Data> = { ...((board?.entries as Record<string, Data> | undefined) ?? {}) };
+      entries[actor] = { handle: profile.handle, displayName: profile.displayName, accent: profile.accent ?? 0, ...media,
+        chapters: Number(stats.chapters), streak: Number(stats.streak ?? 1), level, updatedAt: now };
+      const ordered = Object.entries(entries).sort(([, a], [, b]) => byChapters(a, b));
+      tx.set(path, { schemaVersion: 1, day, entries: Object.fromEntries(ordered.slice(0, LEADERBOARD_SIZE)), updatedAt: now, expiresAt: now + STATS_TTL });
+    }
+  }
+  /**
+   * Opting out (or going invisible) removes the entry at once from the all-time board and from every daily board that
+   * still exists (any signed-in user can read any day until TTL deletes it).
+   */
   private async leaveLeaderboard(tx: Transaction, actor: string, now: number): Promise<void> {
-    const paths = [`leaderboards/${statsDay(now)}`, `leaderboards/${ALL_TIME_BOARD}`];
+    const paths = [...rankingDays(now).map((day) => `leaderboards/${day}`), `leaderboards/${ALL_TIME_BOARD}`];
     const boards = await Promise.all(paths.map((path) => tx.get(path)));
     boards.forEach((board, index) => {
       const entries = board?.entries as Record<string, Data> | undefined;
@@ -1537,48 +1593,11 @@ export class SocialService {
       check(leaving || live, "failed-precondition", "Room lease expired or closed.");
       const members: Record<string, Data> = { ...(existing.members as Record<string, Data>) };
       const event = (kind: string, who: string) => this.roomEvent(tx, roomId!, kind, who, now);
-      if (action === "close" && isHost || (action === "leave" && isHost && !live)) {
-        return { roomId, room: await this.closeRoom(tx, roomId!, existing, now) };
-      }
-      if (leaving && isHost) {
-        // The longest-present member takes over; members who aren't the new host's friends have to go.
-        const successor = Object.entries(members)
-          .filter(([uid, m]) => uid !== actor && m.state === "joined")
-          .sort(([, a], [, b]) => Number(a.joinedAt) - Number(b.joinedAt))[0]?.[0];
-        if (!successor) return { roomId, room: await this.closeRoom(tx, roomId!, existing, now) };
-        const remaining = participants.filter((uid) => uid !== actor);
-        const keep = [successor];
-        for (const uid of remaining) if (uid !== successor && await this.isFriend(tx, successor, uid)) keep.push(uid);
-        const removed = participants.filter((uid) => !keep.includes(uid));
-        // A two-person session ends here even though the room stays open for the successor: recap it now.
-        if (keep.length === 1) await this.roomRecap(tx, existing, now);
-        const epoch = Number(existing.epoch) + 1;
-        // The new host didn't choose to let friends drop in: an open room closes to drop-ins.
-        const room = { ...existing, hostUid: successor, participants: keep, members: Object.fromEntries(keep.map((uid) => [uid, members[uid]])),
-          epoch, writerSessionId: null, updatedAt: now, leaseExpiresAt: now + ROOM_LEASE, ...(existing.open === undefined ? {} : { open: false }) };
-        tx.set(path, room);
-        await this.dropOpenRoom(tx, actor, roomId!);
-        // The new host's device claims the lease (its session) with its next heartbeat.
-        tx.set(`roomLeases/${roomId!}`, { schemaVersion: 1, hostUid: successor, sessionId: null, epoch });
-        this.roomIndex(tx, roomId!, room);
-        for (const uid of removed) this.dropFromIndex(tx, roomId!, uid, now);
-        await event("host", successor);
-        return { roomId, room };
-      }
-      if (leaving || action === "kick") {
-        const target = action === "kick" ? other! : actor;
-        if (action === "kick") check(isHost && target !== host && participants.includes(target), "permission-denied", "Only the host can remove a member.");
-        const keep = participants.filter((uid) => uid !== target);
-        const { [target]: _gone, ...rest } = members;
-        // Nobody left to read with: the room ends like a two-person room did.
-        if (keep.length === 1) return { roomId, room: await this.closeRoom(tx, roomId!, existing, now) };
-        const room = { ...existing, participants: keep, members: rest, updatedAt: now };
-        tx.set(path, room);
-        this.roomIndex(tx, roomId!, room);
-        await this.syncOpenRoom(tx, roomId!, room, now);
-        this.dropFromIndex(tx, roomId!, target, now);
-        await event(action === "kick" ? "removed" : "left", target);
-        return { roomId, room };
+      if (action === "close" && isHost) return { roomId, room: await this.closeRoom(tx, roomId!, existing, now) };
+      if (leaving) return { roomId, room: await this.leaveRoom(tx, roomId!, existing, actor, now) };
+      if (action === "kick") {
+        check(isHost && other !== host && participants.includes(other!), "permission-denied", "Only the host can remove a member.");
+        return { roomId, room: await this.removeMember(tx, roomId!, existing, other!, "removed", now) };
       }
       check(lease, "not-found", "Room unavailable.");
       if (action === "invite") {
@@ -1663,6 +1682,67 @@ export class SocialService {
     }, quota);
   }
   /** Letting friends drop in needs the host's activity shared with friends and invisible mode off. */
+  /**
+   * [actor] leaves the room: a host whose lease ran out closes it, a host hands over to the longest-present member
+   * (members who aren't the new host's friends have to go), and anyone else is removed (the last two end the room).
+   */
+  private async leaveRoom(tx: Transaction, roomId: string, existing: Data, actor: string, now: number): Promise<Data> {
+    const participants = existing.participants as string[], members = existing.members as Record<string, Data>;
+    if (existing.hostUid !== actor) return this.removeMember(tx, roomId, existing, actor, "left", now);
+    if (Number(existing.leaseExpiresAt) <= now) return this.closeRoom(tx, roomId, existing, now);
+    const successor = Object.entries(members)
+      .filter(([uid, m]) => uid !== actor && m.state === "joined")
+      .sort(([, a], [, b]) => Number(a.joinedAt) - Number(b.joinedAt))[0]?.[0];
+    if (!successor) return this.closeRoom(tx, roomId, existing, now);
+    const keep = [successor];
+    for (const uid of participants) if (uid !== actor && uid !== successor && await this.isFriend(tx, successor, uid)) keep.push(uid);
+    const removed = participants.filter((uid) => !keep.includes(uid));
+    // A two-person session ends here even though the room stays open for the successor: recap it now.
+    if (keep.length === 1) await this.roomRecap(tx, existing, now);
+    const epoch = Number(existing.epoch) + 1;
+    // The new host didn't choose to let friends drop in: an open room closes to drop-ins.
+    const room = { ...existing, hostUid: successor, participants: keep, members: Object.fromEntries(keep.map((uid) => [uid, members[uid]])),
+      epoch, writerSessionId: null, updatedAt: now, leaseExpiresAt: now + ROOM_LEASE, ...(existing.open === undefined ? {} : { open: false }) };
+    tx.set(`rooms/${roomId}`, room);
+    await this.dropOpenRoom(tx, actor, roomId);
+    // The new host's device claims the lease (its session) with its next heartbeat.
+    tx.set(`roomLeases/${roomId}`, { schemaVersion: 1, hostUid: successor, sessionId: null, epoch });
+    this.roomIndex(tx, roomId, room);
+    for (const uid of removed) this.dropFromIndex(tx, roomId, uid, now);
+    await this.roomEvent(tx, roomId, "host", successor, now);
+    return room;
+  }
+  /** Takes [target] out of the room (`left` or `removed` in the chat); with only one person left, the room ends. */
+  private async removeMember(tx: Transaction, roomId: string, existing: Data, target: string, kind: "left" | "removed", now: number): Promise<Data> {
+    const keep = (existing.participants as string[]).filter((uid) => uid !== target);
+    const { [target]: _gone, ...rest } = existing.members as Record<string, Data>;
+    if (keep.length === 1) return this.closeRoom(tx, roomId, existing, now);
+    const room = { ...existing, participants: keep, members: rest, updatedAt: now };
+    tx.set(`rooms/${roomId}`, room);
+    this.roomIndex(tx, roomId, room);
+    await this.syncOpenRoom(tx, roomId, room, now);
+    this.dropFromIndex(tx, roomId, target, now);
+    await this.roomEvent(tx, roomId, kind, target, now);
+    return room;
+  }
+  /**
+   * Account deletion: [actor] leaves [roomId] the way `leave` does, without the friendship checks (the account's
+   * edges may already be gone), and the room ends when fewer than two people would stay. Returns whether the room has
+   * ended, so the deletion can remove it entirely.
+   */
+  async departRoom(roomId: string, actor: string): Promise<{ closed: boolean }> {
+    key(roomId);
+    return this.store.transact(async (tx) => {
+      const existing = await tx.get(`rooms/${roomId}`);
+      if (!existing || existing.state === "closed") return { closed: true };
+      if (!(existing.participants as string[]).includes(actor)) return { closed: false };
+      const now = this.clock();
+      let room = await this.leaveRoom(tx, roomId, existing, actor, now);
+      // A host leave keeps the room for a lone successor; after a deletion one person has nobody to read with.
+      if (room.state !== "closed" && (room.participants as string[]).length < 2) room = await this.closeRoom(tx, roomId, room, now);
+      return { closed: room.state === "closed" };
+    });
+  }
   private async openConsent(tx: Transaction, host: string): Promise<void> {
     const settings = await tx.get(`sharingSettings/${host}`);
     check(settings && settings.activity === "friends" && settings.invisible !== true, "failed-precondition",

@@ -103,7 +103,7 @@ export const socialDeleteAccount = onCall({ enforceAppCheck, invoker: "public" }
     throw new HttpsError("failed-precondition", "Sign in again to delete your account.");
   }
   try {
-    await deleteAccount(getFirestore(), getDatabase(), getAuth(), uid);
+    await deleteAccount(getFirestore(), getDatabase(), getAuth(), uid, (roomId) => service.departRoom(roomId, uid));
     await getStorage().bucket().deleteFiles({ prefix: `profileMedia/${uid}/` }).catch(() => {});
     await getStorage().bucket().deleteFiles({ prefix: `coverThumbs/${uid}/` }).catch(() => {});
     await getStorage().bucket().deleteFiles({ prefix: `discordCovers/${uid}/` }).catch(() => {});

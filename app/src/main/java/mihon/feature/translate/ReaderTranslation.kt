@@ -40,7 +40,27 @@ class ReaderTranslation(
     /** The open title's glossary, applied when pages are drawn. */
     private val glossary: () -> Glossary = { Glossary.EMPTY },
 ) {
-    enum class Problem { NO_KEY, INVALID_KEY, QUOTA, NEEDS_WIFI, UNAVAILABLE, FAILED }
+    enum class Problem {
+        NO_KEY,
+        INVALID_KEY,
+        QUOTA,
+        NEEDS_WIFI,
+        UNAVAILABLE,
+        FAILED,
+
+        /** My PC (Koharu): the translator can't be reached. Retried on the next page turn or a tap on Retry. */
+        PC_UNREACHABLE,
+
+        /** My PC (Koharu): still loading its models. Retried like [PC_UNREACHABLE]. */
+        PC_LOADING,
+
+        /** My PC (Koharu): not paired, or the PC forgot this phone. Stops the queue until paired again. */
+        PC_UNPAIRED,
+        ;
+
+        /** Problems that clear up by themselves: [retry] (or the next page turn) tries the page again. */
+        val retryable: Boolean get() = this == PC_UNREACHABLE || this == PC_LOADING
+    }
 
     data class State(
         val enabled: Boolean = false,
@@ -98,8 +118,16 @@ class ReaderTranslation(
             mutableState.value = State(enabled = false)
             return
         }
-        if (!settings().ready) {
-            mutableState.value = State(enabled = false, problem = Problem.NO_KEY)
+        val settings = settings()
+        if (!settings.ready) {
+            val problem = if (settings.engine ==
+                TranslationPreferences.ENGINE_PC
+            ) {
+                Problem.PC_UNPAIRED
+            } else {
+                Problem.NO_KEY
+            }
+            mutableState.value = State(enabled = false, problem = problem)
             return
         }
         synchronized(skipped) { skipped.clear() }
@@ -136,6 +164,13 @@ class ReaderTranslation(
             generation++
         }
         wake.trySend(Unit)
+    }
+
+    /** Tries again after a problem that clears up by itself (the PC translator was closed or still loading). */
+    fun retry(current: ReaderPage?) {
+        if (!state.value.enabled || state.value.halted) return
+        mutableState.update { it.copy(problem = null, detail = null) }
+        current?.let(::onPageSelected)
     }
 
     private fun updateProgress() {
@@ -259,19 +294,27 @@ class ReaderTranslation(
             mutableState.update { it.copy(working = false) }
             throw error
         } catch (error: TranslationException) {
-            synchronized(skipped) { skipped += key }
+            val pc = settings.engine == TranslationPreferences.ENGINE_PC
             val problem = when (error) {
-                is TranslationException.InvalidKey -> Problem.INVALID_KEY
+                is TranslationException.InvalidKey -> if (pc) Problem.PC_UNPAIRED else Problem.INVALID_KEY
                 is TranslationException.QuotaExceeded -> Problem.QUOTA
                 is TranslationException.NeedsWifi -> Problem.NEEDS_WIFI
-                is TranslationException.Unavailable -> Problem.UNAVAILABLE
+                is TranslationException.Unavailable -> when {
+                    !pc -> Problem.UNAVAILABLE
+                    error.code == PcTranslator.NOT_READY -> Problem.PC_LOADING
+                    else -> Problem.PC_UNREACHABLE
+                }
                 is TranslationException.Failed -> Problem.FAILED
             }
-            val halt = problem == Problem.INVALID_KEY || problem == Problem.QUOTA || problem == Problem.NEEDS_WIFI
+            // A closed or loading PC: keep the page wanted (the next page turn or Retry asks again), but stop this
+            // round instead of trying every queued page against a PC that isn't answering.
+            if (!problem.retryable) synchronized(skipped) { skipped += key }
+            val halt = problem == Problem.INVALID_KEY || problem == Problem.QUOTA ||
+                problem == Problem.NEEDS_WIFI || problem == Problem.PC_UNPAIRED
             mutableState.update {
                 it.copy(working = false, problem = problem, detail = error.message, halted = it.halted || halt)
             }
-            !halt
+            !halt && !problem.retryable
         } catch (error: Exception) {
             logcat(LogPriority.ERROR, error) { "Translation failed" }
             synchronized(skipped) { skipped += key }
@@ -321,13 +364,18 @@ data class TranslationSettings(
     val papagoSecret: String = "",
     /** The on-device language pack may download on mobile data too (otherwise only on Wi-Fi). */
     val allowMobileData: Boolean = false,
+    /** My PC (Koharu): the paired PC's address ("IP:port"), name and token; managed by pairing, not the dialog. */
+    val pcAddress: String = "",
+    val pcName: String = "",
+    val pcToken: String = "",
 ) {
-    /** Whether the chosen engine has the key it needs (the on-device engine needs none). */
+    /** Whether the chosen engine has the key (or PC pairing) it needs (the on-device engine needs none). */
     val ready: Boolean
         get() = when (engine) {
             TranslationPreferences.ENGINE_GEMINI -> apiKey.isNotBlank()
             TranslationPreferences.ENGINE_DEEPL -> deeplKey.isNotBlank()
             TranslationPreferences.ENGINE_PAPAGO -> papagoId.isNotBlank() && papagoSecret.isNotBlank()
+            TranslationPreferences.ENGINE_PC -> pcToken.isNotBlank() && PcAddress.parse(pcAddress) != null
             else -> true
         }
 }

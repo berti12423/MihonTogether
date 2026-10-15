@@ -108,6 +108,11 @@ import mihon.feature.translate.MlKitTextTranslator
 import mihon.feature.translate.OcrTranslationEngine
 import mihon.feature.translate.PageTranslator
 import mihon.feature.translate.PapagoTranslator
+import mihon.feature.translate.PcAddress
+import mihon.feature.translate.PcDiscovery
+import mihon.feature.translate.PcPairingController
+import mihon.feature.translate.PcTranslationEngine
+import mihon.feature.translate.PcTranslator
 import mihon.feature.translate.ReaderTranslation
 import mihon.feature.translate.TranslationCache
 import mihon.feature.translate.TranslationEngine
@@ -243,6 +248,22 @@ class ReaderViewModel(
     }
     private var cachedEngine: Pair<TranslationSettings, TranslationEngine>? = null
 
+    /** My PC (Koharu): the translator on the user's PC over the home Wi-Fi, and finding/pairing it. */
+    private val pcTranslator by lazy { PcTranslator(PcTranslator.lanClient(networkHelper.client)) }
+    private val pcDiscovery by lazy { PcDiscovery(context) }
+    val pcPairing by lazy {
+        PcPairingController(viewModelScope, pcTranslator, pcDiscovery, translationPreferences, ::pcDeviceName)
+    }
+
+    /** How the PC's console names this phone when it pairs ("Paired Galaxy A35"). */
+    private fun pcDeviceName(): String =
+        android.provider.Settings.Global.getString(
+            context.contentResolver,
+            android.provider.Settings.Global.DEVICE_NAME,
+        )
+            ?.takeIf { it.isNotBlank() }
+            ?: android.os.Build.MODEL
+
     /** One engine per settings, so the OCR engine remembers the language it detected on earlier pages. */
     private fun translationEngine(settings: TranslationSettings): TranslationEngine = synchronized(this) {
         val reusable = settings.copy(translateSfx = false)
@@ -255,6 +276,16 @@ class ReaderViewModel(
                 OcrTranslationEngine(
                     textFinder.value,
                     PapagoTranslator(translationClient, settings.papagoId, settings.papagoSecret),
+                )
+            TranslationPreferences.ENGINE_PC ->
+                PcTranslationEngine(
+                    pcTranslator,
+                    PcAddress.parse(settings.pcAddress) ?: PcAddress(""),
+                    settings.pcToken,
+                    settings.pcName,
+                    relocate = { name -> pcDiscovery.find(name) },
+                    onRelocated = { pcPairing.relocated(it) },
+                    toPng = { BitmapPageImages().toPng(it) },
                 )
             else -> OcrTranslationEngine(textFinder.value, onDeviceTranslator.value)
         }.also { cachedEngine = reusable to it }
@@ -370,14 +401,17 @@ class ReaderViewModel(
     /** Reader menu: switches page translation on or off (asks for a key first if there is none). */
     fun toggleTranslation() {
         val enable = !translation.state.value.enabled
-        // The on-device engine keeps everything on the phone, so it may run in incognito mode.
-        val online = translationPreferences.settings().engine != TranslationPreferences.ENGINE_ON_DEVICE
+        // The on-device and PC engines keep pages on the user's own devices, so they may run in incognito mode.
+        val online = !TranslationPreferences.isLocal(translationPreferences.settings().engine)
         if (enable && incognitoMode && online) {
             eventChannel.trySend(Event.TranslationIncognito)
             return
         }
         translation.setEnabled(enable, lastSelectedPage)
-        if (enable && translation.state.value.problem == ReaderTranslation.Problem.NO_KEY) {
+        val problem = translation.state.value.problem
+        if (enable &&
+            (problem == ReaderTranslation.Problem.NO_KEY || problem == ReaderTranslation.Problem.PC_UNPAIRED)
+        ) {
             enableAfterSettings = true
             openTranslationSettings()
         }
@@ -386,6 +420,11 @@ class ReaderViewModel(
     /** Reader menu: the current page's blocks to edit or hide, with the title's glossary. */
     fun openTranslationEditor() {
         val page = lastSelectedPage ?: return
+        // The PC draws the finished page itself: there are no text blocks to edit.
+        if (translationPreferences.settings().engine == TranslationPreferences.ENGINE_PC) {
+            eventChannel.trySend(Event.TranslationEditUnavailable)
+            return
+        }
         val pageTranslation = translation.translationFor(page)
         if (pageTranslation == null) {
             eventChannel.trySend(Event.TranslationNotReady)
@@ -428,22 +467,37 @@ class ReaderViewModel(
 
     fun translationSettings(): TranslationSettings = translationPreferences.settings()
 
-    fun saveTranslationSettings(settings: TranslationSettings) {
-        val changed = settings != translationPreferences.settings()
+    /** Reader: Retry on the translation pill after the PC translator was closed or still loading. */
+    fun retryTranslation() {
+        translation.retry(lastSelectedPage)
+    }
+
+    fun saveTranslationSettings(dialogSettings: TranslationSettings) {
+        // The PC pairing is saved by pairing itself; the dialog's copy may be older.
+        val stored = translationPreferences.settings()
+        val settings = dialogSettings.copy(
+            pcAddress = stored.pcAddress,
+            pcName = stored.pcName,
+            pcToken = stored.pcToken,
+        )
+        val changed = settings != stored
         translationPreferences.save(settings)
         closeDialog()
         if (changed) translation.forgetPages()
         if (translation.state.value.enabled || enableAfterSettings) {
             enableAfterSettings = false
-            val online = settings.engine != TranslationPreferences.ENGINE_ON_DEVICE
+            val online = !TranslationPreferences.isLocal(settings.engine)
             if (!incognitoMode || !online) translation.setEnabled(true, lastSelectedPage)
         }
         stopOnlineTranslationInIncognito()
     }
 
-    /** Incognito allows only the on-device engine: an online one (switched to, or already on) stops right away. */
+    /**
+     * Incognito allows only the local engines (on-device, own PC): an online one (switched to, or already on) stops
+     * right away.
+     */
     private fun stopOnlineTranslationInIncognito() {
-        val online = translationPreferences.settings().engine != TranslationPreferences.ENGINE_ON_DEVICE
+        val online = !TranslationPreferences.isLocal(translationPreferences.settings().engine)
         if (incognitoMode && online && translation.state.value.enabled) {
             translation.setEnabled(false)
             eventChannel.trySend(Event.TranslationIncognito)
@@ -1477,6 +1531,7 @@ class ReaderViewModel(
         data class RoomTitleMissing(val title: String) : Event
         data object TranslationIncognito : Event
         data object TranslationNotReady : Event
+        data object TranslationEditUnavailable : Event
         data object TranslationSentToRoom : Event
     }
 }

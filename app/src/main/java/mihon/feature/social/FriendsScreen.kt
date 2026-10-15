@@ -78,6 +78,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.icerock.moko.resources.StringResource
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
@@ -1820,72 +1821,48 @@ private fun RequestRow(
 
 @Composable
 private fun SharingControls(settings: SocialSharing, busy: Boolean, onIntent: (FriendsIntent) -> Unit) {
-    val update = { value: SocialSharing -> onIntent(FriendsIntent.ChangeSharing(value)) }
-    PrivacySwitch(stringResource(MR.strings.social_library), settings.library == "friends", !busy) {
-        update(settings.copy(library = visibility(it)))
+    for (switch in SharingSwitch.entries) {
+        // Invisible mode hides instead of sharing, so it sits apart from the sharing switches.
+        if (switch == SharingSwitch.INVISIBLE) HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        PrivacySwitch(
+            stringResource(switch.label),
+            SharingEditor.isOn(settings, switch),
+            SharingEditor.enabled(settings, switch, busy),
+        ) { on -> onIntent(FriendsIntent.ChangeSharing(SharingEditor.set(settings, switch, on))) }
+        switch.summary?.let {
+            Text(
+                stringResource(it),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
-    // Part of the library: only meaningful (and only sent) while the library is shared.
-    PrivacySwitch(
-        stringResource(MR.strings.social_share_progress),
-        settings.progress,
-        !busy && settings.library == "friends",
-    ) {
-        update(settings.copy(progress = it))
-    }
-    PrivacySwitch(stringResource(MR.strings.social_favorites), settings.favorites == "friends", !busy) {
-        update(settings.copy(favorites = visibility(it)))
-    }
-    PrivacySwitch(stringResource(MR.strings.social_activity), settings.activity == "friends", !busy) {
-        update(settings.copy(activity = visibility(it)))
-    }
-    PrivacySwitch(stringResource(MR.strings.social_feed), settings.feed == "friends", !busy) {
-        update(settings.copy(feed = visibility(it)))
-    }
-    PrivacySwitch(stringResource(MR.strings.social_stats), settings.stats == "friends", !busy) {
-        update(settings.copy(stats = visibility(it)))
-    }
-    PrivacySwitch(stringResource(MR.strings.social_global_ranking), settings.globalRanking, !busy) {
-        update(settings.copy(globalRanking = it))
-    }
-    PrivacySwitch(
-        stringResource(MR.strings.social_ranking_media),
-        settings.rankingMedia,
-        !busy && settings.globalRanking && !settings.invisible,
-    ) {
-        update(settings.copy(rankingMedia = it))
-    }
-    Text(
-        stringResource(MR.strings.social_global_ranking_summary),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    PrivacySwitch(stringResource(MR.strings.social_reviews), settings.reviews, !busy) {
-        update(settings.copy(reviews = it))
-    }
-    Text(
-        stringResource(MR.strings.social_reviews_summary),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    PrivacySwitch(stringResource(MR.strings.social_presence), settings.presence == "friends", !busy) {
-        update(settings.copy(presence = visibility(it)))
-    }
-    PrivacySwitch(stringResource(MR.strings.social_last_seen), settings.lastSeen == "friends", !busy) {
-        update(settings.copy(lastSeen = visibility(it)))
-    }
-    // Invisible mode hides instead of sharing, so it sits apart from the sharing switches.
-    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-    PrivacySwitch(stringResource(MR.strings.social_invisible), settings.invisible, !busy) {
-        update(settings.copy(invisible = it))
-    }
-    Text(
-        stringResource(MR.strings.social_invisible_summary),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 }
 
-private fun visibility(shared: Boolean) = if (shared) "friends" else "private"
+private val SharingSwitch.label: StringResource
+    get() = when (this) {
+        SharingSwitch.LIBRARY -> MR.strings.social_library
+        SharingSwitch.PROGRESS -> MR.strings.social_share_progress
+        SharingSwitch.FAVORITES -> MR.strings.social_favorites
+        SharingSwitch.ACTIVITY -> MR.strings.social_activity
+        SharingSwitch.FEED -> MR.strings.social_feed
+        SharingSwitch.STATS -> MR.strings.social_stats
+        SharingSwitch.GLOBAL_RANKING -> MR.strings.social_global_ranking
+        SharingSwitch.RANKING_MEDIA -> MR.strings.social_ranking_media
+        SharingSwitch.REVIEWS -> MR.strings.social_reviews
+        SharingSwitch.PRESENCE -> MR.strings.social_presence
+        SharingSwitch.LAST_SEEN -> MR.strings.social_last_seen
+        SharingSwitch.INVISIBLE -> MR.strings.social_invisible
+    }
+
+/** The explanation shown under a switch, where there is one. */
+private val SharingSwitch.summary: StringResource?
+    get() = when (this) {
+        SharingSwitch.RANKING_MEDIA -> MR.strings.social_global_ranking_summary
+        SharingSwitch.REVIEWS -> MR.strings.social_reviews_summary
+        SharingSwitch.INVISIBLE -> MR.strings.social_invisible_summary
+        else -> null
+    }
 
 @Composable
 private fun PrivacySwitch(title: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {

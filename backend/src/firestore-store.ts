@@ -20,6 +20,10 @@ function fieldValue(data: Data, field: string): unknown {
 /** The adapter buffers effects so every native transaction reads before it writes. */
 export function createFirestoreStore(firestore: Firestore): Store {
   return {
+    read: async (path) => {
+      const snapshot = await firestore.doc(path).get();
+      return snapshot.exists ? decode(snapshot.data()) as Data : null;
+    },
     transact: (body) => firestore.runTransaction(async (native) => {
       const pending = new Map<string, Data | null>();
       const fetched = new Map<string, Promise<Data | null>>();

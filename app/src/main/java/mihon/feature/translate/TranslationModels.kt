@@ -63,8 +63,11 @@ sealed class TranslationException(message: String, cause: Throwable? = null) : E
     /** Daily or per-minute free quota used up (HTTP 429). Further requests will fail too. */
     class QuotaExceeded(message: String) : TranslationException(message)
 
-    /** The model is overloaded (HTTP 503) or another temporary server problem. */
-    class Unavailable(message: String) : TranslationException(message)
+    /**
+     * The model is overloaded (HTTP 503) or another temporary server problem. [code] tells the PC translator's cases
+     * apart ([PcTranslator.UNREACHABLE], [PcTranslator.NOT_READY]); null for the other engines.
+     */
+    class Unavailable(message: String, val code: String? = null) : TranslationException(message)
 
     /** The on-device language pack is missing and may only download on Wi-Fi (the reader is on mobile data). */
     class NeedsWifi(message: String) : TranslationException(message)

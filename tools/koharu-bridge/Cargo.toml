@@ -1,8 +1,8 @@
 [package]
 name = "mihon-together-translator"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "Local HTTP bridge that runs Koharu's manga translation pipeline for the Mihon Together website reader."
+description = "Local HTTP bridge that runs Koharu's manga translation pipeline for the Mihon Together website reader and paired phones."
 license = "Apache-2.0"
 publish = false
 
@@ -28,12 +28,17 @@ koharu-runtime = { git = "https://github.com/koharu-rs/koharu", rev = "2c78c0cd6
 ab_glyph = "0.2.32"
 anyhow = "1.0.104"
 async-trait = "0.1.92"
+base64 = "0.22.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 bytes = "1.12.1"
+getrandom = "0.3.4"
+if-addrs = "0.15.0"
 image = "0.25.10"
 imageproc = "0.27.0"
+mdns-sd = "0.21.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+sha2 = "0.11.0"
 tokio = { version = "1.53.1", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }

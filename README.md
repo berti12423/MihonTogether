@@ -52,7 +52,7 @@ Get the APK from the [releases page](https://github.com/berti12423/MihonTogether
 * **Discord status:** show what you're reading on your Discord profile (optional).
 * **Website:** your friends, chats, libraries and rankings at [mihontogether.web.app](https://mihontogether.web.app).
 * **My library on the web:** read your phone's library in your computer's browser. Pages go straight from the phone over an encrypted WebRTC link; nothing is uploaded.
-* **Translate raws on your PC:** the [Mihon Together Translator](tools/koharu-bridge) runs [Koharu](https://github.com/koharu-rs/koharu) locally and turns Japanese, Korean and Chinese pages into English in the web reader. No keys, nothing uploaded.
+* **Translate raws on your PC:** the [Mihon Together Translator](tools/koharu-bridge) runs [Koharu](https://github.com/koharu-rs/koharu) locally and turns Japanese, Korean and Chinese pages into English in the web reader, or on your phone over your Wi-Fi (pair the app with the PC once). The website shows which translation models fit your graphics card. No keys, nothing uploaded.
 
 **Privacy:** local reading works signed out and offline. You choose what friends can see in Privacy, invisible mode hides everything, and nothing is shared beyond your friends except the optional global ranking. See the [privacy policy](docs/PRIVACY_POLICY.md).
 

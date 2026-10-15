@@ -86,3 +86,48 @@ Base URL `http://127.0.0.1:47823`. The bridge listens on 127.0.0.1 only.
 
 **Pinned Koharu:** `koharu-rs/koharu` at the commit below. Models and options are Koharu's defaults (see `docs/koharu-spike.md`).
 Koharu commit: 2c78c0cd6eeec4dbf607f0a22e3a7e1f932b6ff3
+
+### Settings (2026-10-14)
+
+`GET /settings` and `PUT /settings` on 127.0.0.1:47823 (same Host/Origin checks and CORS as the rest; the preflight allows `PUT`; not on the phone port). The body is `{ settings, defaults, options }`; `settings` holds `ocr`, `inpainting`, `llm` (a local model id from Koharu's catalog), `instructions` (≤ 2000 characters), `temperature` 0–2, `topP` 0.01–1, `topK` 1–1000, `maxTokens` 16–8192, `repeatPenalty` 0.5–2 (each `null` for the model's default), `reasoning`, `vision` and `fonts` (≤ 8 family names, tried before Koharu's defaults). `PUT` takes the full object, validates it (`400 bad_settings`), saves `settings.json` next to `config.json` and applies it before the next page. `/health`'s `models` reflect the chosen models plus `settings` (8 hex characters), which the website's page cache key includes. The website's /translator page shows the form while the translator is ready; translator 0.1.0 answers 404 and the page asks for an update. `options.gpu` is the NVIDIA GPU from `nvidia-smi` (`{ name, vramMb }`, or null) and each `options.llm` entry carries `sizeMb` and `projectorMb` (`model_sizes.rs`, read from Hugging Face at the pinned revisions); the website estimates graphics memory as 1.1 x the files plus 2.9 GB (measured: Gemma 4 12B used 10.1 GB in total on an RTX 5070 Ti), labels each model fits / tight / too big against the GPU minus 1.5 GB, and recommends the best fitting model (`QUALITY_ORDER` in `translator-settings.ts`).
+
+## Phone uses the PC translator (API v1, phone port), planned 2026-10-11
+
+Berti: "if someone wants to translate through their phone, can we make them sync up the pages from their PC?" The phone app sends pages straight to the translator on the same Wi-Fi.
+
+### Translator side
+
+- **Phone listener.** A second listener on `0.0.0.0:47824` (all interfaces). It's on by default; `--no-phone` or `"phone": false` in the config file turns it off. Config file: `%LOCALAPPDATA%\MihonTogether-Translator\config.json`, holding `{ "phone": true, "tokens": [{ "id", "name", "hash", "createdAt", "lastUsedAt" }] }`.
+- **First start.** Windows asks once to allow network access. The console explains this: "Allow on private networks so your phone can connect".
+- **Discovery.** Advertise mDNS/DNS-SD service `_mihontogether._tcp.local.` on port 47824, with TXT `api=1` and `name=<PC name>`.
+- **Pairing code.** 6 digits, new on each start, shown in the console as "Phone pairing code: 123 456". It's only needed to add a new phone; paired phones keep working with their token.
+- **Endpoints on 47824** (no CORS needed; browsers aren't involved):
+  - `GET /health`: the same JSON as on 127.0.0.1, plus `"paired": true|false` (true when a valid `Authorization: Bearer <token>` was sent). Without a token it still answers, so the phone can show state, name and version.
+  - `POST /pair` with body `{ "code": "123456", "device": "Galaxy A35" }`:
+    - success: `200 { "token": "<random 32 bytes, base64url>", "name": "<PC name>" }`. Only a SHA-256 hash of the token is stored, and the console prints "Paired Galaxy A35".
+    - wrong code: `403 { "error": "bad_code" }`. After 5 wrong codes the translator refuses all pairing for 60 s (`429 { "error": "locked" }`).
+  - `POST /translate?target=en-US`, with `Authorization: Bearer <token>`. Same body, limits, queue and responses as on 127.0.0.1. A missing or unknown token gets `401 { "error": "unpaired" }`.
+  - `DELETE /pair` with a token removes that phone, and the console prints it.
+- **Queue.** The browser and the phone share the one-at-a-time queue.
+- **Host header.** The DNS-rebinding `Host` check stays on 127.0.0.1:47823. The phone port accepts any `Host`, since phones use the LAN IP and token auth protects it.
+- **Encryption.** Plain HTTP on the home network. The token is a bearer secret that only matters on the LAN. This limit is documented.
+- **Built (translator 0.2.0, 2026-10-11).** Details beyond the list above:
+  - `DELETE /pair` answers `204` with no body.
+  - `/pair` errors also include `400 bad_device` (device not 1–60 characters after trimming), `400 bad_request` (body isn't that JSON) and `413 too_large` (body over 4 KB). `429 locked` carries `Retry-After` in seconds.
+  - Wrong codes 1–5 get `403`; the lock starts after the fifth, so the sixth attempt within 60 s gets `429`, even with the right code. A right code resets the count.
+  - The code may be sent as `123456`, `123 456` or `123-456`.
+  - Requests with an `Origin` header (browsers) get `403 forbidden_origin` on the phone port.
+  - The token scheme `Bearer` is case-insensitive.
+  - Up to 32 paired phones are kept; the least recently used is dropped past that.
+
+### Phone side
+
+- **Engine.** A new translation engine, **"My PC (Koharu)"**, sits next to the existing engines in the reader's translation settings.
+- **Pairing screen.** Finds PCs with `NsdManager` (service `_mihontogether._tcp`), with "Enter address manually" (IP or IP:port) as a fallback. The user enters the 6-digit code, and the phone stores the token like the Gemini key (private preference, excluded from backups). It shows the paired PC's name and has an "Unpair" button.
+- **Reading.** The phone sends the whole page (original bytes) and gets back a finished PNG. That PNG becomes the rendered page in the existing translation cache and viewer pipeline (keyed like other engines, with engine id `pc-koharu`), so prefetch, the Original toggle and the cache work as they do now. There are no editable text blocks, because Koharu renders the page itself.
+- **Errors.**
+  - PC unreachable or translator closed: "Your PC translator isn't reachable. Start it on your PC (same Wi-Fi)." This doesn't halt the queue for good; it retries when the reader moves on.
+  - `401`: "Pair again".
+  - `503 not_ready`: "Your PC is still loading the models".
+- **Networking.** Cleartext HTTP to the LAN address must be allowed (check the app's network security config and `usesCleartextTraffic`). The address is remembered, and if it changes, NSD rediscovery by PC name updates it.
+- **Privacy.** Pages go only to the user's own paired PC. Incognito works like the other local engines (on-device and PC count as local).

@@ -1166,7 +1166,7 @@
     <string name="social_presence">Online status</string>
     <string name="social_last_seen">Last seen</string>
     <string name="social_invisible">Invisible mode</string>
-    <string name="social_invisible_summary">Hides you instead of sharing: you appear offline, and reading activity and Read together pause. Turn it off to read with friends.</string>
+    <string name="social_invisible_summary">Hides everything from friends: you appear offline, your library, favorites, activity, stats and reviews are hidden, and Read together pauses. Turn it off (and publish your library again) to share.</string>
     <string name="social_online">Online</string>
     <string name="social_offline">Offline</string>
     <string name="social_status_private">Online status not shared</string>
@@ -1265,7 +1265,7 @@
     <string name="translate_error_quota">Out of free translations for now. Switch to the free on-device engine in Translation settings, or try again later.</string>
     <string name="translate_error_unavailable">The translator isn\'t available right now (busy, or the language pack couldn\'t download). Turn translation off and on to retry.</string>
     <string name="translate_error_failed">This page couldn't be translated.</string>
-    <string name="translate_incognito">In incognito mode only the on-device engine translates, because the others send pages or text online.</string>
+    <string name="translate_incognito">In incognito mode only the on-device and My PC engines translate, because the others send pages or text online.</string>
     <string name="translate_engine">Translation engine</string>
     <string name="translate_engine_on_device">On this phone (free, no limits)</string>
     <string name="translate_engine_on_device_info">Reads the text and translates it on your phone. The first time, a language pack of about 30 MB downloads. Quick and private, but rougher translations.</string>
@@ -1713,4 +1713,35 @@
     <string name="web_library_notification_text">Only your browser, signed in to your account, can connect.</string>
     <string name="web_library_channel">Library on the web</string>
     <string name="web_library_vpn_hint">A VPN or AdGuard is on. If your browser fails to connect, exclude Mihon Together in it (in AdGuard: App management).</string>
+    <!-- Translation on my PC (Koharu), 2026-10-11, docs/KOHARU_TRANSLATION_PLAN.md -->
+    <string name="translate_engine_pc">My PC (Koharu)</string>
+    <string name="translate_engine_pc_info">Sends each page over your home Wi-Fi to the Mihon Together Translator on your own PC. Koharu finds, translates and redraws every bubble there. Very good quality, and nothing goes to the internet.</string>
+    <string name="translate_pc_help">Install the Mihon Together Translator on your Windows PC (mihontogether.web.app/translator), keep it open, same Wi-Fi. The pairing code is in its window.</string>
+    <string name="translate_pc_pair">Pair with my PC</string>
+    <string name="translate_pc_pair_title">Pair with your PC</string>
+    <string name="translate_pc_pair_action">Pair</string>
+    <string name="translate_pc_found">PCs on this Wi-Fi</string>
+    <string name="translate_pc_searching">Looking for PCs on this Wi-Fi. If none shows up, enter the address shown in the translator\'s window.</string>
+    <string name="translate_pc_manual">Enter address manually</string>
+    <string name="translate_pc_address">PC address (IP or IP:port)</string>
+    <string name="translate_pc_address_invalid">Enter an address like 192.168.1.20 or 192.168.1.20:47824.</string>
+    <string name="translate_pc_code">6-digit pairing code</string>
+    <string name="translate_pc_pairing">Pairing...</string>
+    <string name="translate_pc_bad_code">Wrong code. Check the pairing code in the translator\'s window.</string>
+    <string name="translate_pc_locked">Too many wrong codes. Wait a minute, then try again.</string>
+    <string name="translate_pc_pair_unreachable">Couldn\'t reach the translator at this address. Is it open on your PC, on the same Wi-Fi? If it is, Windows Firewall may be blocking it: set the PC\'s network to Private and allow the translator when Windows asks.</string>
+    <string name="translate_pc_pair_failed">Pairing didn\'t work. Try again.</string>
+    <string name="translate_pc_paired_with">Paired with %1$s</string>
+    <string name="translate_pc_status_checking">Checking your PC...</string>
+    <string name="translate_pc_status_ready">Ready</string>
+    <string name="translate_pc_status_loading">Loading the models</string>
+    <string name="translate_pc_status_loading_detail">Loading: %1$s</string>
+    <string name="translate_pc_status_unreachable">Not reachable. Start the translator on your PC (same Wi-Fi). Still nothing? Set the PC\'s network to Private in Windows.</string>
+    <string name="translate_pc_status_unpaired">Your PC doesn\'t know this phone anymore. Pair again.</string>
+    <string name="translate_pc_status_error">The translator reports a problem: %1$s</string>
+    <string name="translate_pc_unpair">Unpair</string>
+    <string name="translate_pc_error_unreachable">Your PC translator isn\'t reachable. Start it on your PC (same Wi-Fi).</string>
+    <string name="translate_pc_error_loading">Your PC is still loading the models. Try again in a moment.</string>
+    <string name="translate_pc_error_unpaired">Pair this phone with your PC in Translation settings first.</string>
+    <string name="translate_pc_edit_unavailable">Editing isn\'t available with My PC (Koharu): your PC draws the finished page.</string>
 </resources>

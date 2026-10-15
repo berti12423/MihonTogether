@@ -28,10 +28,10 @@ service firebase.storage {
       allow delete: if request.auth != null && request.auth.uid == uid;
     }
     // Cover thumbnails for shared titles (the web can't load many sources' own covers): owner writes small JPEG/WebP
-    // images; friends read while the owner shares their library or favorites.
+    // images; friends read while the owner shares their library or favorites and isn't invisible.
     function sharesTitles(uid) {
       let settings = firestore.get(/databases/(default)/documents/sharingSettings/$(uid)).data;
-      return settings.library == 'friends' || settings.favorites == 'friends';
+      return (settings.library == 'friends' || settings.favorites == 'friends') && settings.get('invisible', false) != true;
     }
     match /coverThumbs/{uid}/{contentKey} {
       allow read: if request.auth != null &&
