@@ -287,7 +287,7 @@ fun TitleCard(content: SocialContent, onClick: () -> Unit) {
                 sourceId = -1,
                 isMangaFavorite = false,
                 url = content.coverUrl,
-                lastModified = 0,
+                lastModified = null,
             ),
             modifier = Modifier.width(44.dp),
         )

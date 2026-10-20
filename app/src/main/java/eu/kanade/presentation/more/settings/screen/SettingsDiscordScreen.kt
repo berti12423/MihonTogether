@@ -93,21 +93,21 @@ object SettingsDiscordScreen : SearchableSettings {
                             entries = sources,
                             title = stringResource(MR.strings.pref_discord_sources),
                             subtitle = stringResource(MR.strings.pref_discord_sources_summary),
-                            enabled = enabled,
+                            visible = enabled,
                         ),
                     )
                     add(
                         Preference.PreferenceItem.SwitchPreference(
                             preference = preferences.showCover,
                             title = stringResource(MR.strings.pref_discord_cover),
-                            enabled = enabled,
+                            visible = enabled,
                         ),
                     )
                     add(
                         Preference.PreferenceItem.SwitchPreference(
                             preference = preferences.showChapter,
                             title = stringResource(MR.strings.pref_discord_chapter),
-                            enabled = enabled,
+                            visible = enabled,
                         ),
                     )
                     add(
@@ -115,7 +115,7 @@ object SettingsDiscordScreen : SearchableSettings {
                             preference = preferences.watching,
                             title = stringResource(MR.strings.pref_discord_watching),
                             subtitle = stringResource(MR.strings.pref_discord_watching_summary),
-                            enabled = enabled,
+                            visible = enabled,
                         ),
                     )
                     add(
@@ -123,7 +123,7 @@ object SettingsDiscordScreen : SearchableSettings {
                             preference = preferences.showLevel,
                             title = stringResource(MR.strings.pref_discord_level),
                             subtitle = stringResource(MR.strings.pref_discord_level_summary),
-                            enabled = enabled,
+                            visible = enabled,
                         ),
                     )
                     add(
@@ -131,7 +131,7 @@ object SettingsDiscordScreen : SearchableSettings {
                             preference = preferences.showButton,
                             title = stringResource(MR.strings.pref_discord_button),
                             subtitle = stringResource(MR.strings.pref_discord_button_summary),
-                            enabled = enabled,
+                            visible = enabled,
                         ),
                     )
                     if (available) {
@@ -153,6 +153,19 @@ object SettingsDiscordScreen : SearchableSettings {
                                                     ?.let { "$it/discord-logo.png" },
                                             ),
                                         )
+                                    }
+                                },
+                            ),
+                        )
+                    }
+                    if (available) {
+                        add(
+                            Preference.PreferenceItem.TextPreference(
+                                title = stringResource(MR.strings.pref_discord_clear),
+                                subtitle = stringResource(MR.strings.pref_discord_clear_summary),
+                                onClick = {
+                                    context.findActivity()?.let {
+                                        SocialSdkDiscordPresence.clearIfLingering(it, force = true)
                                     }
                                 },
                             ),

@@ -188,6 +188,8 @@
     <string name="onboarding_storage_selection_required">A folder must be selected</string>
     <string name="onboarding_storage_help_info">Updating from an older version and not sure what to select? Refer to the storage guide for more information.</string>
     <string name="onboarding_storage_help_action">Storage guide</string>
+    <string name="app_migrating_title">Finishing the update</string>
+    <string name="app_migrating_summary">Getting things ready after the update. This can take a few minutes, so keep the app open.</string>
     <string name="onboarding_permission_install_apps">Install apps permission</string>
     <string name="onboarding_permission_install_apps_description">To install source extensions.</string>
     <string name="onboarding_permission_notifications">Notification permission</string>
@@ -326,6 +328,8 @@
     <string name="pref_hide_missing_chapter_indicators">Hide missing chapter indicators</string>
     <string name="pref_disallow_non_ascii_filenames">Disallow non-ASCII filenames</string>
     <string name="pref_disallow_non_ascii_filenames_details">Ensures compatibility with certain storage media that don't support Unicode. When this is enabled, you'll need to manually rename source and manga folders by replacing non-ASCII characters with their lowercase UTF-8 hexadecimal representations. Chapter files don't need to be renamed.</string>
+    <string name="pref_enable_chapter_name_hash">Enable chapter name hash suffix</string>
+    <string name="pref_enable_chapter_name_hash_details">Ensures a unique hash suffix is added to chapter names to prevent naming conflicts. If disabled, chapters with identical names cannot be downloaded.</string>
 
       <!-- Extension section -->
     <string name="multi_lang">Multi</string>
@@ -343,8 +347,6 @@
     <string name="ext_filtered">Filtered</string>
     <string name="ext_not_loaded">Not loaded</string>
     <string name="ext_not_loaded_dialog">Couldn\'t load</string>
-    <string name="ext_install_error">Couldn\'t install</string>
-    <string name="ext_install_error_details">Why it failed</string>
     <string name="ext_not_loaded_details">Why it isn\'t loaded</string>
     <string name="ext_copy_stacktrace">Copy stack trace</string>
     <string name="ext_filtered_message">This extension\'s content warning isn\'t one you chose to load, so its sources aren\'t available.</string>
@@ -407,6 +409,8 @@
     <string name="pref_double_tap_zoom">Double tap to zoom</string>
     <string name="pref_cutout_short">Show content in cutout area</string>
     <string name="pref_page_transitions">Animate page transitions</string>
+    <string name="pref_load_ahead_only_over_wifi">Load ahead only on Wi-Fi</string>
+    <string name="pref_load_ahead_only_over_wifi_summary">Saves mobile data by loading only the pages near the one you\'re reading</string>
     <string name="pref_flash_page">Flash on page change</string>
     <string name="pref_flash_page_summ">Reduces ghosting on e-ink displays</string>
     <string name="pref_flash_duration">Flash duration</string>
@@ -989,6 +993,9 @@
     <!--UpdateCheck-->
     <string name="update_check_confirm">Download</string>
     <string name="update_check_open">Open on GitHub</string>
+    <string name="update_check_skip">Skip this version</string>
+    <string name="update_check_skip_title">Skip %s?</string>
+    <string name="update_check_skip_message">Updates often contain bug fixes and security improvements. You won\'t be reminded about this version again, but you\'ll still be notified when a newer one is released.</string>
     <!-- reserved for future use -->
     <string name="update_check_eol">This Android version is no longer supported</string>
     <string name="update_check_no_new_updates">No new updates available</string>
@@ -1013,6 +1020,8 @@
     <string name="information_webview_required">WebView is required for the app to function</string>
     <!-- Do not translate "WebView" -->
     <string name="information_webview_outdated">Please update the WebView app for better compatibility</string>
+    <!-- Do not translate "WebView" -->
+    <string name="information_webview_crashed">WebView stopped working and the page was closed</string>
     <string name="chapter_settings_updated">Updated default chapter settings</string>
 
     <!-- Download Notification -->
@@ -1228,6 +1237,8 @@
     <string name="pref_discord_test">Send test status</string>
     <string name="pref_discord_test_title">Mihon Together</string>
     <string name="pref_discord_test_state">Testing Discord status</string>
+    <string name="pref_discord_clear">Remove status from Discord</string>
+    <string name="pref_discord_clear_summary">If your status is stuck on Discord after you stopped reading, tap here to remove it.</string>
     <string name="pref_discord_status_idle">Shows a test status on your Discord profile for a minute.</string>
     <string name="pref_discord_status_waiting">Sent to the Discord app, waiting for an answer… If this doesn't change, open Discord on this phone and make sure you're signed in.</string>
     <string name="pref_discord_status_shown">Discord accepted it. Your profile shows the status now.</string>
@@ -1236,7 +1247,7 @@
     <string name="pref_discord_status_unavailable">Discord support couldn't load: %1$s</string>
     <string name="pref_discord_status_no_app">The Discord app isn't installed on this phone. Install it from the Play Store and sign in.</string>
     <string name="pref_discord_status_too_old">Your Discord app doesn't accept statuses from other apps yet. Update Discord from the Play Store.</string>
-    <string name="pref_discord_grace">After you leave the reader for another app, your status stays for 10 minutes. Closing the chapter clears it at once.</string>
+    <string name="pref_discord_grace">Leaving the reader clears your status at once. It also goes away after 5 minutes without turning a page, and comes back when you turn one.</string>
     <string name="pref_discord_unavailable">Discord support isn't included in this build yet.</string>
     <string name="discord_reading_with">Reading with %1$s</string>
     <string name="discord_level">Level %1$d</string>
@@ -1330,6 +1341,8 @@
     <string name="social_room_trust">Trust extension</string>
     <string name="social_room_missing_extension">The host reads this in %1$s (%2$s), which isn\'t in your extension stores. Add a store that has it (More → Settings → Browse → Extension stores), then come back.</string>
     <string name="social_ask_to_read">Ask to read along</string>
+    <string name="social_find_reading">Find this series</string>
+    <string name="social_open_reading">Open this series</string>
     <string name="social_join_requests">Want to read with you</string>
     <string name="social_join_open_chapter">Open a chapter to accept: the request pops up in the reader.</string>
     <string name="reader_social_join_request">%1$s asks to read along</string>

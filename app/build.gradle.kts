@@ -98,8 +98,8 @@ android {
     defaultConfig {
         applicationId = "dev.mihontogether.reader"
 
-        versionCode = 33
-        versionName = "0.20.4"
+        versionCode = 38
+        versionName = "0.21.2"
 
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
@@ -289,6 +289,7 @@ dependencies {
     discordSdkAar?.let { implementation(files(it)) }
 
     implementation(projects.i18n)
+    implementation(projects.icons.customMaterialSymbols)
     implementation(projects.icons.materialSymbols)
     implementation(projects.icons.simpleIcons)
     implementation(projects.core.archive)
@@ -333,6 +334,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.uiTooling)
     implementation(libs.androidx.compose.uiToolingPreview)
     implementation(libs.androidx.compose.uiUtil)
+    implementation(libs.androidx.navigationEvent)
 
     implementation(libs.androidx.interpolator)
 

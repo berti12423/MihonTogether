@@ -24,17 +24,20 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import mihon.feature.social.SocialFeedItem
 import mihon.feature.social.SocialIdentity
 import mihon.feature.social.SocialRepository
 import mihon.feature.social.reader.ReaderReadingIdentity
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.interactor.GetChapter
@@ -51,10 +54,10 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /**
  * [WebLibraryBackend] over the app's own library: the same interactors, caches and loaders as the library screen and
@@ -81,6 +84,7 @@ class WebLibraryAppBackend(
     private val trackPreferences: TrackPreferences,
     private val trackChapter: TrackChapter,
     private val socialRepository: SocialRepository,
+    @AppCoroutineScope private val appScope: CoroutineScope,
 ) : WebLibraryBackend {
     /** Last progress time per chapter, to add the reading time between the web's progress reports to history. */
     private val lastProgress = ConcurrentHashMap<Long, Long>()
@@ -110,17 +114,17 @@ class WebLibraryAppBackend(
                 unread = item.unreadCount,
                 downloaded = downloadManager.getDownloadCount(manga),
                 categoryIds = item.categories,
-                coverVersion = manga.coverLastModified,
-                lastRead = item.lastRead.takeIf { it > 0 },
-                dateAdded = manga.favoriteAt ?: 0,
+                coverVersion = manga.coverLastModified?.toEpochMilliseconds() ?: 0,
+                lastRead = item.lastRead?.toEpochMilliseconds()?.takeIf { it > 0 },
+                dateAdded = manga.favoriteAt?.toEpochMilliseconds() ?: 0,
             )
         }
         return WebLibrary(categories, manga)
     }
 
-    override suspend fun cover(mangaId: Long, maxWidth: Int): ByteArray? = withIOContext {
-        val manga = libraryManga(mangaId) ?: return@withIOContext null
-        val file = coverFile(manga) ?: return@withIOContext null
+    override suspend fun cover(mangaId: Long, maxWidth: Int): ByteArray? = withContext(Dispatchers.IO) {
+        val manga = libraryManga(mangaId) ?: return@withContext null
+        val file = coverFile(manga) ?: return@withContext null
         resizeJpeg(file, maxWidth)
     }
 
@@ -166,7 +170,7 @@ class WebLibraryAppBackend(
                 scanlator = chapter.scanlator,
                 read = chapter.read,
                 bookmark = chapter.bookmark,
-                lastPageRead = chapter.lastPageRead,
+                lastPageRead = chapter.lastPageRead.toLong(),
                 downloaded = downloadManager.isChapterDownloaded(
                     chapter.name,
                     chapter.scanlator,
@@ -174,7 +178,7 @@ class WebLibraryAppBackend(
                     manga.title,
                     manga.source,
                 ),
-                dateUpload = chapter.dateUpload,
+                dateUpload = chapter.dateUpload?.toEpochMilliseconds() ?: 0,
             )
         }
         return WebMangaDetails(
@@ -203,7 +207,17 @@ class WebLibraryAppBackend(
         val manga = libraryManga(chapter.mangaId) ?: return null
         val source = sourceManager.getOrStub(manga.source)
         val readerChapter = ReaderChapter(chapter)
-        val loader = ChapterLoader(context, downloadManager, downloadProvider, chapterCache, manga, source)
+        val loader = ChapterLoader(
+            context,
+            downloadManager,
+            downloadProvider,
+            chapterCache,
+            appScope,
+            // The web asks for each page itself, so only the pages next to the one asked for load ahead.
+            canLoadAhead = { false },
+            manga = manga,
+            source = source,
+        )
         try {
             loader.loadChapter(readerChapter)
         } catch (error: CancellationException) {
@@ -224,7 +238,7 @@ class WebLibraryAppBackend(
         override val pageCount: Int = pages.size
         override val downloaded: Boolean = loader.isLocal
 
-        override suspend fun image(index: Int): ByteArray = withIOContext {
+        override suspend fun image(index: Int): ByteArray = withContext(Dispatchers.IO) {
             val page = pages[index]
             if (!loader.isLocal) {
                 // An online page that was evicted from the chapter cache, or failed earlier, loads again.
@@ -268,13 +282,13 @@ class WebLibraryAppBackend(
         updateChapter.await(
             ChapterUpdate(chapterId) {
                 this.read = read
-                this.lastPageRead = lastPageRead.toLong()
+                this.lastPageRead = lastPageRead
             },
         )
         val now = System.currentTimeMillis()
         // Reading time between two reports (the web sends one every few seconds while reading); long gaps don't count.
         val duration = lastProgress.put(chapterId, now)?.let { now - it }?.takeIf { it in 0..MAX_GAP_MS } ?: 0
-        upsertHistory.await(HistoryUpdate(chapterId, Date(now), duration))
+        upsertHistory.await(HistoryUpdate(chapterId, Instant.fromEpochMilliseconds(now), duration))
     }
 
     override suspend fun chapterFinished(chapterId: Long, pageCount: Int?) {

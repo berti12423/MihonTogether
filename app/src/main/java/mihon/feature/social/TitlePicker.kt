@@ -161,7 +161,7 @@ private fun PickerCover(
                 sourceId = -1,
                 isMangaFavorite = false,
                 url = content.coverUrl,
-                lastModified = 0,
+                lastModified = null,
             ),
             title = content.title,
             onClick = onClick,

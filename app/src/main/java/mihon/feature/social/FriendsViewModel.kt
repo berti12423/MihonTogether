@@ -109,6 +109,8 @@ data class FriendsState(
     val roomGuide: RoomSourceGuide? = null,
     /** Installing the room's extension: null when idle, otherwise the step. */
     val installing: eu.kanade.tachiyomi.extension.model.InstallStep? = null,
+    /** Why the room's extension failed to install, when an exception said so. */
+    val installError: String? = null,
     /** After installing: open this source's search for the room's title once. */
     val sourceJump: Pair<Long, String>? = null,
     /** Rooms whose title I can open in one step (host shared its URL, the source is installed here). */
@@ -747,7 +749,10 @@ class FriendsViewModel(
                 return@mapNotNull null
             }
             val key = SocialIdentity.content(item.manga)?.contentKey ?: return@mapNotNull null
-            SocialProgress.of(item.readCount, item.totalChapters, item.lastRead)?.let { key to it }
+            SocialProgress.of(item.readCount, item.totalChapters, item.lastRead?.toEpochMilliseconds() ?: 0)?.let {
+                key to
+                    it
+            }
         }.toMap()
     }
 
@@ -971,13 +976,17 @@ class FriendsViewModel(
                 ?: return@launch
             try {
                 extensionManager.installExtension(extension).collect { step ->
-                    mutableState.update { it.copy(installing = step) }
+                    mutableState.update { it.copy(installing = step, installError = null) }
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                val root = generateSequence<Throwable>(error) { it.cause }.last()
                 mutableState.update {
-                    it.copy(installing = eu.kanade.tachiyomi.extension.model.InstallStep.Error.from(error))
+                    it.copy(
+                        installing = eu.kanade.tachiyomi.extension.model.InstallStep.Error,
+                        installError = root.message ?: root::class.simpleName,
+                    )
                 }
                 return@launch
             }

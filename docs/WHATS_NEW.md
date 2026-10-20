@@ -2,6 +2,13 @@
 
 The first section is what the app shows in its update screen (through `apk.json` on the website). Newest first; write for readers, not developers.
 
+## October 21, 2026: Find what friends are reading, Mihon 0.21.2
+
+- **Find what a friend is reading:** on a friend's profile, "Find this series" sits next to "Ask to read along" while they're reading. It opens the title if it's in your library, otherwise it searches their source (if you have it) or all your sources.
+- **Discord status no longer gets stuck:** it goes away after 5 minutes without turning a page and comes back when you turn one. If it ever stays after you stop reading, Settings → Discord → "Remove status from Discord" clears it.
+- **Updated to Mihon 0.21.2:** pages load in parallel, more image formats open (AVIF, JPEG XL, HEIF), backups are faster, and a long list of Mihon crash fixes. There's also an optional high quality reader renderer (Settings → Advanced).
+- This one installs normally over your current app.
+
 ## October 15, 2026: Translate on your PC from your phone (one-time reinstall)
 
 - **This update needs a one-time reinstall.** The app is signed with a new key, so Android can't install it over the old one. Your account, friends, messages and XP are safe on the server. Before you uninstall, save your library: More → Settings → Data and storage → Create backup, and keep the file. Then uninstall Mihon Together Dev, install the new app, and use Restore backup. Future updates install normally again.

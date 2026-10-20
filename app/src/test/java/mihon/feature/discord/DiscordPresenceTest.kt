@@ -1,6 +1,7 @@
 package mihon.feature.discord
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -160,6 +161,28 @@ class DiscordPresenceTest {
         scope.runCurrent()
         assertEquals(listOf("update Chapter 1", "clear", "update Chapter 1"), backend.calls)
         scope.cancel()
+    }
+
+    @Test
+    fun `the status goes idle after five minutes without a page turn and comes back on the next one`() = runTest {
+        val turns = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        val seen = mutableListOf<Boolean>()
+        val job = backgroundScope.launch { PresenceIdle.idle(turns, PresenceIdle.TIMEOUT_MS).collect { seen += it } }
+        runCurrent()
+        assertEquals(listOf(false), seen)
+        advanceTimeBy(PresenceIdle.TIMEOUT_MS - 1_000)
+        turns.tryEmit(Unit)
+        runCurrent()
+        advanceTimeBy(PresenceIdle.TIMEOUT_MS - 1_000)
+        runCurrent()
+        assertEquals(listOf(false), seen)
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(listOf(false, true), seen)
+        turns.tryEmit(Unit)
+        runCurrent()
+        assertEquals(listOf(false, true, false), seen)
+        job.cancel()
     }
 }
 

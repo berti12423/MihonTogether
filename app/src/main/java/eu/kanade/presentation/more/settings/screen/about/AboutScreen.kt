@@ -37,7 +37,9 @@ import eu.kanade.tachiyomi.util.system.isNightlyBuildType
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.updaterEnabled
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import logcat.LogPriority
@@ -51,8 +53,6 @@ import mihon.icons.simpleicons.Reddit
 import mihon.icons.simpleicons.SimpleIcons
 import mihon.icons.simpleicons.X
 import tachiyomi.core.common.Constants
-import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.release.interactor.GetApplicationRelease
 import tachiyomi.i18n.MR
@@ -132,7 +132,7 @@ object AboutScreen : Screen() {
                                     scope.launch {
                                         isCheckingUpdates = true
                                         try {
-                                            val release = withIOContext {
+                                            val release = withContext(Dispatchers.IO) {
                                                 mihon.feature.update.TogetherUpdates.checkNow(
                                                     context.appGraph.networkHelper,
                                                 )
@@ -272,9 +272,9 @@ object AboutScreen : Screen() {
         onFinish: () -> Unit,
     ) {
         val updateChecker = context.appGraph.updateChecker
-        withUIContext {
+        withContext(Dispatchers.Main) {
             try {
-                when (val result = withIOContext { updateChecker.checkForUpdate(forceCheck = true) }) {
+                when (val result = updateChecker.checkForUpdate(forceCheck = true)) {
                     is GetApplicationRelease.Result.NewUpdate -> {
                         onAvailableUpdate(result)
                     }

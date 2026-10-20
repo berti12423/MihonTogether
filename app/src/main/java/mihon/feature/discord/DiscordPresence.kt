@@ -5,10 +5,13 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import tachiyomi.core.common.preference.PreferenceStore
@@ -201,6 +204,22 @@ object PresenceRules {
     /** Discord's limit for activity text fields. */
     const val MAX_TEXT = 128
     const val MAX_URL = 256
+}
+
+/**
+ * Whether the reader sits idle: true once [PresenceIdle.TIMEOUT_MS] pass without a page turn, false again on the next
+ * turn. A reader left open (phone on a stand, screen kept on) would otherwise keep "Watching ..." on Discord for hours.
+ */
+object PresenceIdle {
+    const val TIMEOUT_MS = 5 * 60_000L
+
+    fun idle(pageTurns: Flow<Unit>, timeoutMs: Long): Flow<Boolean> = merge(flowOf(Unit), pageTurns)
+        .transformLatest {
+            emit(false)
+            delay(timeoutMs)
+            emit(true)
+        }
+        .distinctUntilChanged()
 }
 
 /**

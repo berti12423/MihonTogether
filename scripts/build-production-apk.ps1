@@ -4,7 +4,7 @@
   type (R8-minified like a release, about 40% of the debug size) with the debug app ID dev.mihontogether.reader.dev
   and signing key, so it installs next to Mihon and updates earlier test builds. Copies it to the Desktop.
 #>
-param([string]$JavaHome = 'C:\Program Files\Java\jdk-21.0.10')
+param([string]$JavaHome = 'C:\Program Files\Java\jdk-21.0.12')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo

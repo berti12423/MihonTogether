@@ -3,7 +3,7 @@
   Lets USB-connected phones reach the local Firebase emulators (and the web companion) on this PC.
   Use with an APK built with -Psocial-emulator-host=127.0.0.1. Re-run after replugging a phone.
 #>
-param([string]$JavaHome = 'C:\Program Files\Java\jdk-21.0.10')
+param([string]$JavaHome = 'C:\Program Files\Java\jdk-21.0.12')
 . (Join-Path $PSScriptRoot 'use-workspace-build.ps1') -JavaHome $JavaHome | Out-Null
 $adb = Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe'
 # Auth, Firestore, Realtime Database, Functions, Storage, web companion

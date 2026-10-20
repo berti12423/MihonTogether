@@ -20,6 +20,7 @@ import mihon.app.di.appGraph
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
+import mihon.icons.materialsymbols.R as MaterialSymbolsR
 
 /**
  * Keeps the process alive while the browser reads the library (type dataSync), with a Disconnect action. It does no
@@ -87,7 +88,11 @@ class WebLibraryService : Service() {
             setOnlyAlertOnce(true)
             setCategory(NotificationCompat.CATEGORY_SERVICE)
             open?.let(::setContentIntent)
-            addAction(R.drawable.ic_close_24dp, stringResource(MR.strings.web_library_disconnect), disconnect)
+            addAction(
+                MaterialSymbolsR.drawable.rounded_close,
+                stringResource(MR.strings.web_library_disconnect),
+                disconnect,
+            )
         }.build()
         ServiceCompat.startForeground(
             this,

@@ -47,7 +47,7 @@ internal fun SocialContent.cover() = tachiyomi.domain.manga.model.MangaCover(
     sourceId = -1,
     isMangaFavorite = false,
     url = coverUrl,
-    lastModified = 0,
+    lastModified = null,
 )
 
 /** A friend's title in Mihon's comfortable-grid style, with an "In library" badge when I have it too. */

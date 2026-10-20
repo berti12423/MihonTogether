@@ -91,9 +91,9 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import kotlinx.coroutines.delay
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.Favorite
-import mihon.icons.materialsymbols.rounded.Visibility
-import mihon.icons.materialsymbols.rounded.VisibilityOff
 import mihon.icons.materialsymbols.roundedfilled.Favorite
+import mihon.icons.materialsymbols.roundedfilled.Visibility
+import mihon.icons.materialsymbols.roundedfilled.VisibilityOff
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.PullRefresh
@@ -288,6 +288,18 @@ private fun FriendsBody(
     var picked by remember { mutableStateOf<SocialContent?>(null) }
     var friendsFor by remember { mutableStateOf<SocialContent?>(null) }
     var titleFor by remember { mutableStateOf<ReadTogetherTarget?>(null) }
+    // My copy when I have it; otherwise their source when it's installed here (matched by its hashed key), else all
+    // my sources.
+    val findTitle: (SocialContent) -> Unit = { content ->
+        val localId = state.localIndex[content.contentKey]
+        when {
+            localId != null -> onOpenManga(localId)
+            else -> when (val guide = RoomSourceGuide.locate(content, state.installedSources)) {
+                is RoomSourceGuide.Installed -> onBrowseSource(guide.sourceId, content.title)
+                else -> onSearch(content.title)
+            }
+        }
+    }
     picked?.let { content ->
         val localId = state.localIndex[content.contentKey]
         // A friend's title (profile or grid): offer the private "I'd read this with you" wish.
@@ -296,13 +308,7 @@ private fun FriendsBody(
             content = content,
             localId = localId,
             onOpenManga = onOpenManga,
-            // Their source when I have it installed (matched by its hashed key), otherwise all my sources.
-            onSearch = { title ->
-                when (val guide = RoomSourceGuide.locate(content, state.installedSources)) {
-                    is RoomSourceGuide.Installed -> onBrowseSource(guide.sourceId, title)
-                    else -> onSearch(title)
-                }
-            },
+            onSearch = { findTitle(content) },
             onReadTogether = if (localId != null && state.friends.isNotEmpty()) {
                 { friendsFor = content }
             } else {
@@ -556,6 +562,7 @@ private fun FriendsBody(
                             onIntent,
                             loadMedia,
                             onPick = { picked = it },
+                            onFind = findTitle,
                             onReadTogether = if (state.library.isNotEmpty()) {
                                 {
                                     val pinned = friend.activity?.takeIf { state.localIndex[it.contentKey] != null }
@@ -1023,6 +1030,7 @@ private fun LazyListScope.friendDetail(
     onIntent: (FriendsIntent) -> Unit,
     loadMedia: ProfileMediaLoader,
     onPick: (SocialContent) -> Unit,
+    onFind: (SocialContent) -> Unit,
     onReadTogether: (() -> Unit)?,
 ) {
     item { ProfileHeader(friend.profile, loadMedia) }
@@ -1062,9 +1070,22 @@ private fun LazyListScope.friendDetail(
         }) {
             Text(stringResource(if (nudged) MR.strings.social_nudged else MR.strings.social_nudge))
         }
-        if (friend.activity != null) {
-            TextButton(enabled = !state.busy, onClick = { onIntent(FriendsIntent.AskToRead(friend.profile.uid)) }) {
-                Text(stringResource(MR.strings.social_ask_to_read))
+        friend.activity?.let { activity ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { onFind(activity) }) {
+                    Text(
+                        stringResource(
+                            if (state.localIndex[activity.contentKey] != null) {
+                                MR.strings.social_open_reading
+                            } else {
+                                MR.strings.social_find_reading
+                            },
+                        ),
+                    )
+                }
+                TextButton(enabled = !state.busy, onClick = { onIntent(FriendsIntent.AskToRead(friend.profile.uid)) }) {
+                    Text(stringResource(MR.strings.social_ask_to_read))
+                }
             }
         }
         Row {
@@ -1910,8 +1931,8 @@ private fun RoomSourceAction(
                     },
                 )
             }
-            (installing as? eu.kanade.tachiyomi.extension.model.InstallStep.Error)?.let {
-                Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            state.installError?.takeIf { installing == eu.kanade.tachiyomi.extension.model.InstallStep.Error }?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
         }
         is RoomSourceGuide.Untrusted -> Column {
@@ -2067,7 +2088,7 @@ private fun OwnTitleRow(
             },
         ) {
             Icon(
-                if (hidden) MaterialSymbols.Rounded.VisibilityOff else MaterialSymbols.Rounded.Visibility,
+                if (hidden) MaterialSymbols.RoundedFilled.VisibilityOff else MaterialSymbols.RoundedFilled.Visibility,
                 contentDescription = stringResource(if (hidden) MR.strings.social_restore else MR.strings.social_hide),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )

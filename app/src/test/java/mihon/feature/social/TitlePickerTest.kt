@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 class TitlePickerTest {
     private fun content(key: String, title: String) = SocialContent(key, title, "source", "work-$key", "edition-$key")
@@ -41,16 +42,16 @@ class TitlePickerTest {
             source = 123L,
             url = "/title/first",
             title = "First",
-            favoriteAt = 1L,
+            favoriteAt = Instant.fromEpochMilliseconds(1),
             thumbnailUrl = "https://example.org/cover.jpg",
-            coverLastModified = 42,
+            coverLastModified = Instant.fromEpochMilliseconds(42),
         )
         val key = SocialIdentity.content(mine)!!.contentKey
         val cover = FriendList.covers(listOf(mine, Manga.create().copy(id = 8, source = 0L, title = "Local")))
         assertEquals(setOf(key), cover.keys)
         assertEquals(7L, cover[key]!!.mangaId)
         assertEquals(true, cover[key]!!.isMangaFavorite)
-        assertEquals(42L, cover[key]!!.lastModified)
+        assertEquals(42L, cover[key]!!.lastModified?.toEpochMilliseconds())
         assertNull(FriendList.covers(emptyList())[key])
     }
 }

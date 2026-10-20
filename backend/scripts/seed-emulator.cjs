@@ -1,6 +1,6 @@
 // Seeds the LOCAL emulators (demo-mihon-together only) with smoke accounts for manual UI checks:
 // alice_smoke and bob_smoke are friends; carol_smoke is a stranger. Bob and Carol read a few chapters today, and Bob
-// shares a 130-title library with covers (to try the grid's paging).
+// shares a 130-title library with covers (to try the grid's paging) and is reading its first title.
 // Usage (emulators running): node backend/scripts/seed-emulator.cjs
 const { randomUUID } = require('node:crypto');
 const { initializeApp, deleteApp } = require('firebase/app');
@@ -33,7 +33,7 @@ async function session(person) {
   await b.call('socialFriendAction', { operationId: op(), action: 'accept', otherUid: a.uid });
   const settings = { library: 'private', favorites: 'private', activity: 'private', presence: 'private', lastSeen: 'private',
     feed: 'private', stats: 'friends', invisible: false };
-  await b.call('socialUpdateSharing', { operationId: op(), expectedGeneration: 1, settings: { ...settings, library: 'friends' }, hideContentKey: null });
+  await b.call('socialUpdateSharing', { operationId: op(), expectedGeneration: 1, settings: { ...settings, library: 'friends', activity: 'friends' }, hideContentKey: null });
   const key = (text) => require('node:crypto').createHash('sha256').update(text).digest('hex');
   const titles = Array.from({ length: 130 }, (_, i) => ({ contentKey: key(`seed-${i}`), title: `${['Solo', 'Tower', 'Omniscient', 'Return', 'Villain'][i % 5]} Story ${i + 1}`,
     sourceKey: 'source-v1:seed', sourceWorkKey: key(`work-${i}`), editionKey: key(`edition-${i}`), canonicalProvider: null, canonicalId: null,
@@ -41,6 +41,9 @@ async function session(person) {
   for (let i = 0; i < titles.length; i += 50) {
     await b.call('socialPublishEntries', { operationId: op(), generation: 2, kind: 'library', entries: titles.slice(i, i + 50), deleteKeys: [] });
   }
+  // Bob is reading the first title right now (the friend profile's "Reading:" line).
+  await b.call('socialPublishActivity', { operationId: op(), generation: 2,
+    activity: { content: titles[0], chapterKey: key('seed-0-ch-12'), chapterLabel: 'Chapter 12' } });
   const reads = [[b, 2, 2], [c, 1, 4]];
   for (const [who, generation, count] of reads) {
     for (let i = 0; i < count; i++) {

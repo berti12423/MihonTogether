@@ -2,10 +2,10 @@
 .SYNOPSIS
   Local CI: backend unit + emulator suites and the Android checks, with a summary. Exit code 0 only if all pass.
 .EXAMPLE
-  .\scripts\verify-all.ps1 -JavaHome 'C:\Program Files\Java\jdk-21.0.10'
+  .\scripts\verify-all.ps1 -JavaHome 'C:\Program Files\Java\jdk-21.0.12'
 #>
 param(
-    [string]$JavaHome = 'C:\Program Files\Java\jdk-21.0.10',
+    [string]$JavaHome = 'C:\Program Files\Java\jdk-21.0.12',
     [switch]$SkipEmulators,
     [switch]$SkipAndroid,
     [switch]$SkipWeb,

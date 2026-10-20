@@ -4,13 +4,13 @@ import android.content.Context
 import dev.zacsweers.metro.Inject
 import eu.kanade.domain.track.model.toDbTrack
 import eu.kanade.domain.track.model.toDomainTrack
-import eu.kanade.domain.track.service.DelayedTrackingUpdateJob
+import eu.kanade.domain.track.service.DelayedTrackingUpdateWorker
 import eu.kanade.domain.track.store.DelayedTrackingStore
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import logcat.LogPriority
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.interactor.UpsertTrack
@@ -24,9 +24,9 @@ class TrackChapter(
 ) {
 
     suspend fun await(context: Context, mangaId: Long, chapterNumber: Double, setupJobOnFailure: Boolean = true) {
-        withNonCancellableContext {
+        coroutineScope {
             val tracks = getTracks.await(mangaId)
-            if (tracks.isEmpty()) return@withNonCancellableContext
+            if (tracks.isEmpty()) return@coroutineScope
 
             tracks.mapNotNull { track ->
                 val service = trackerManager.get(track.trackerId)
@@ -46,7 +46,7 @@ class TrackChapter(
                         } catch (e: Exception) {
                             delayedTrackingStore.add(track.id, chapterNumber)
                             if (setupJobOnFailure) {
-                                DelayedTrackingUpdateJob.setupTask(context)
+                                DelayedTrackingUpdateWorker.setupTask(context)
                             }
                             throw e
                         }

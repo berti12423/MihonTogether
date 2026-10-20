@@ -46,6 +46,9 @@ object SocialSdkDiscordPresence : DiscordPresence {
     // the clear is undone on the next start (clearIfLingering). Discord keeps the last status until told otherwise.
     @Volatile private var appContext: Context? = null
 
+    private fun maybeShowing(): Boolean =
+        appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.getBoolean(KEY_SHOWN, false) == true
+
     private fun markShowing(shown: Boolean) {
         appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putBoolean(KEY_SHOWN, shown)?.apply()
     }
@@ -92,7 +95,12 @@ object SocialSdkDiscordPresence : DiscordPresence {
                         recoveryAttempts.clear()
                         rebuildClient()
                         val info = lastInfo
-                        if (showing && info != null) sendNow(info)
+                        if (showing && info != null) {
+                            sendNow(info)
+                        } else if (maybeShowing()) {
+                            // A clear sent while the link was broken never reached Discord: send it again.
+                            clearNow(force = true)
+                        }
                     }
                     return@launch
                 }
@@ -224,6 +232,8 @@ object SocialSdkDiscordPresence : DiscordPresence {
         pendingClear?.cancel()
         pendingClear = null
         if (!initialized || (!showing && !force)) return
+        // A broken link drops the clear silently (it has no result): reconnect first when an Activity allows it.
+        if (needsReset && liveActivity() != null) rebuildClient()
         nativeClear()
         lastInfo = null
         showing = false
@@ -231,8 +241,9 @@ object SocialSdkDiscordPresence : DiscordPresence {
             nativeRunCallbacks()?.let { result -> handleResult(result) }
             delay(CLEAR_PUMP_GAP_MS)
         }
-        markShowing(false)
-        _status.value = DiscordStatus.Cleared
+        // Still broken: keep the marker, so the next start or reader visit sends the clear again.
+        markShowing(needsReset)
+        _status.value = if (needsReset) DiscordStatus.Reconnecting else DiscordStatus.Cleared
         keepPumping()
     }
 

@@ -2,12 +2,13 @@ package mihon.feature.social.reader
 
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.source.online.HttpSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.domain.source.interactor.UpdateMangaFromRemote
 import mihon.feature.social.SocialContent
 import mihon.feature.social.SocialIdentity
 import mihon.feature.social.SocialSource
-import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
@@ -54,16 +55,16 @@ class RoomTitleImporter(
     }
 
     /** Where to open the room's title; null when it can't be opened here (the source guide takes over). */
-    suspend fun import(content: SocialContent, chapterKey: String?): RoomDestination? = withIOContext {
-        val shared = content.source ?: return@withIOContext null
-        val url = SocialSource.validUrl(shared.url) ?: return@withIOContext null
-        val source = sourceManager.get(shared.id) as? HttpSource ?: return@withIOContext null
+    suspend fun import(content: SocialContent, chapterKey: String?): RoomDestination? = withContext(Dispatchers.IO) {
+        val shared = content.source ?: return@withContext null
+        val url = SocialSource.validUrl(shared.url) ?: return@withContext null
+        val source = sourceManager.get(shared.id) as? HttpSource ?: return@withContext null
         try {
             val manga = getMangaByUrlAndSourceId.await(url, source.id)
                 ?: networkToLocalManga(Manga.create().copy(url = url, title = content.title, source = source.id))
             // The URL must lead to exactly the room's edition; never open a lookalike.
             val local = SocialIdentity.content(manga)?.takeIf { ReadingCompatibility.sameEdition(it, content) }
-                ?: return@withIOContext null
+                ?: return@withContext null
             var chapters = getChaptersByMangaId.await(manga.id)
             var chapter = ReadTogetherStart.matchChapter(local, chapters, chapterKey)
             if (chapters.isEmpty() || (chapterKey != null && chapter == null)) {

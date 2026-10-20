@@ -6,7 +6,7 @@
   Optional firebase --only list, e.g. "firestore:rules,storage". Default: everything.
 #>
 param(
-    [string]$JavaHome = 'C:\Program Files\Java\jdk-21.0.10',
+    [string]$JavaHome = 'C:\Program Files\Java\jdk-21.0.12',
     [string]$Only = 'firestore:rules,firestore:indexes,database,storage,functions,hosting',
     [switch]$SkipTests
 )

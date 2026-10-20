@@ -46,7 +46,7 @@ class HistoryRepositoryImpl(
     override suspend fun getReadingLog(): List<ReadingLogEntry> {
         return database.historyQueries
             .getReadingLog { mangaId, title, readAt, readDuration ->
-                ReadingLogEntry(mangaId, title, readAt?.time ?: 0L, readDuration)
+                ReadingLogEntry(mangaId, title, readAt?.toEpochMilliseconds() ?: 0L, readDuration)
             }
             .awaitAsList()
     }
@@ -55,6 +55,15 @@ class HistoryRepositoryImpl(
         return database.historyQueries
             .getHistoryByMangaId(mangaId, HistoryMapper::mapHistory)
             .awaitAsList()
+    }
+
+    override suspend fun getHistoryByMangaIds(mangaIds: List<Long>): Map<Long, List<History>> {
+        return database.historyQueries
+            .getHistoryByMangaIds(mangaIds) { mangaId, id, chapterId, readAt, readDuration ->
+                mangaId to HistoryMapper.mapHistory(id, chapterId, readAt, readDuration)
+            }
+            .awaitAsList()
+            .groupBy({ it.first }, { it.second })
     }
 
     override suspend fun resetHistory(historyId: Long) {
