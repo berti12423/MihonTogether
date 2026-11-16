@@ -24,7 +24,7 @@ Only the same account: the browser must be signed in as the phone's account. Fir
 
 ### Connection
 
-- Web: `RTCPeerConnection` with one ordered, reliable `RTCDataChannel` ("library"). ICE servers: `stun:stun.l.google.com:19302` only (no TURN: no relay costs; same-Wi-Fi works through host candidates; across networks it works when NATs allow, otherwise "Couldn't connect, make sure both are on the same Wi-Fi").
+- Web: `RTCPeerConnection` with one ordered, reliable `RTCDataChannel` ("library"). ICE servers: `stun:stun.l.google.com:19302` only (no TURN: no relay costs; same-Wi-Fi works through host candidates; across networks it works when NATs allow, otherwise "Couldn't connect, make sure both are on the same Wi-Fi"). **Changed 2026-11-16:** a Cloudflare Realtime TURN relay is the fallback across networks (Berti's decision; free up to 1,000 GB a month); see `docs/WEB_LIBRARY_PROTOCOL.md`.
 - Android: WebRTC library `io.getstream:stream-webrtc-android` (Apache-2.0 prebuilt libwebrtc; check the current version and ABI sizes; arm64 adds roughly 8–12 MB to the online APK). Data channel only, no audio/video, no camera/mic permissions.
 - Note for the privacy policy: STUN tells Google's STUN server the device's public IP during connection setup (standard WebRTC); nothing else.
 

@@ -204,9 +204,21 @@ class WebLibraryHost(
         active.get()?.let { end(it) }
         val connectionScope = CoroutineScope(SupervisorJob(scope.coroutineContext.job) + Dispatchers.IO)
         val holder = AtomicReference<Connection?>(null)
+        // Without relay servers (offline backend, relay not set up) the connection is direct only, as before.
+        val relays = try {
+            withTimeoutOrNull(RELAY_TIMEOUT_MS) { WebLibraryRelay.parse(repository.iceServers()) }.orEmpty()
+        } catch (error: CancellationException) {
+            connectionScope.cancel()
+            throw error
+        } catch (error: Exception) {
+            logcat(LogPriority.WARN, error) { "Web library relay servers not loaded" }
+            emptyList()
+        }
+        android.util.Log.i(WebLibraryPeer.DIAG, "relay servers: ${relays.size}")
         val peer = try {
             WebLibraryPeer(
                 context,
+                relays,
                 onText = { text ->
                     holder.get()?.let { connection ->
                         connection.lastRequest = System.currentTimeMillis()
@@ -307,6 +319,7 @@ class WebLibraryHost(
         private const val NO_HELLO_MS = 60_000L
         private const val IDLE_CHECK_MS = 15_000L
         private const val ANSWER_TIMEOUT_MS = 10_000L
+        private const val RELAY_TIMEOUT_MS = 4_000L
         private const val RETRY_MS = 30_000L
     }
 }

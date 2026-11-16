@@ -45,10 +45,10 @@ object WebLibraryRtc {
             .setUseHardwareNoiseSuppressor(false)
             .setEnableVolumeLogger(false)
             .createAudioDeviceModule()
-        // Same-Wi-Fi feature: gather on the Wi-Fi/Ethernet network itself. Mobile data would cost the data plan, and a
-        // VPN app (e.g. AdGuard's local VPN) gives an address the browser on the home network can't reach.
+        // Mobile data is allowed, so the browser can be on another network (WebRTC still prefers Wi-Fi when both are
+        // up). A VPN app (e.g. AdGuard's local VPN) gives an address the browser can't reach, so it stays ignored.
         val options = PeerConnectionFactory.Options().apply {
-            networkIgnoreMask = PeerConnectionFactory.Options.ADAPTER_TYPE_CELLULAR or
+            networkIgnoreMask =
                 PeerConnectionFactory.Options.ADAPTER_TYPE_VPN or PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK
         }
         PeerConnectionFactory.builder()
@@ -58,8 +58,40 @@ object WebLibraryRtc {
             .also { factory = it }
     }
 
-    val ICE_SERVERS: List<PeerConnection.IceServer> =
-        listOf(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer())
+    /** Direct first (STUN finds the public address); [relays] are the fallback when no direct path works. */
+    fun iceServers(relays: List<WebLibraryRelay>): List<PeerConnection.IceServer> =
+        listOf(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()) +
+            relays.map {
+                PeerConnection.IceServer.builder(it.urls)
+                    .setUsername(it.username)
+                    .setPassword(it.credential)
+                    .createIceServer()
+            }
+}
+
+/**
+ * A relay (TURN) server with short-lived credentials from the `socialIceServers` callable. It only forwards the
+ * encrypted channel, for when the phone and the browser are on networks that can't reach each other directly.
+ */
+data class WebLibraryRelay(val urls: List<String>, val username: String, val credential: String) {
+    // Credentials stay out of logs.
+    override fun toString() = "WebLibraryRelay(${urls.size} urls)"
+
+    companion object {
+        private val URL = Regex("""turns?:[a-z0-9.-]+:[0-9]{1,5}\?transport=(udp|tcp)""")
+        private const val MAXIMUM = 4
+
+        /** The valid relay servers in a `socialIceServers` reply; anything else is dropped. */
+        fun parse(reply: Map<String, Any?>): List<WebLibraryRelay> =
+            (reply["iceServers"] as? List<*>).orEmpty().mapNotNull { server ->
+                val fields = server as? Map<*, *> ?: return@mapNotNull null
+                val urls = (fields["urls"] as? List<*>).orEmpty().filterIsInstance<String>().filter(URL::matches)
+                val username = fields["username"] as? String
+                val credential = fields["credential"] as? String
+                if (urls.isEmpty() || username == null || credential == null) return@mapNotNull null
+                WebLibraryRelay(urls, username, credential)
+            }.take(MAXIMUM)
+    }
 }
 
 /**
@@ -69,6 +101,7 @@ object WebLibraryRtc {
  */
 class WebLibraryPeer(
     context: Context,
+    relays: List<WebLibraryRelay>,
     private val onText: (String) -> Unit,
     private val onClosed: () -> Unit,
 ) : WebLibrarySink {
@@ -118,7 +151,7 @@ class WebLibraryPeer(
 
     private val connection: PeerConnection = checkNotNull(
         WebLibraryRtc.factory(context).createPeerConnection(
-            PeerConnection.RTCConfiguration(WebLibraryRtc.ICE_SERVERS).apply {
+            PeerConnection.RTCConfiguration(WebLibraryRtc.iceServers(relays)).apply {
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
                 continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
             },

@@ -1873,3 +1873,46 @@ test('a deleted host hands a room of three over instead of ending it', async () 
   const room = f.store.docs.get(`rooms/${roomId}`);
   assert.equal(room.hostUid, 'bob'); assert.deepEqual(room.participants, ['bob', 'charlie']); assert.equal(room.state, 'active');
 });
+
+// ---------- relay (TURN) credentials for the web library ----------
+const { turnServers, TURN_TTL_SECONDS } = require('../lib/turn.js');
+const cloudflare = (body, status = 201) => {
+  const calls = [];
+  const fetcher = async (url, init) => { calls.push({ url, init }); return { status, ok: status >= 200 && status < 300, json: async () => body }; };
+  return { calls, fetcher };
+};
+const CF_REPLY = { iceServers: [
+  { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.cloudflare.com:53'] },
+  { urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turn:turn.cloudflare.com:53?transport=udp', 'turn:turn.cloudflare.com:80?transport=tcp',
+    'turns:turn.cloudflare.com:443?transport=tcp'], username: 'user1', credential: 'pass1' },
+] };
+
+test('relay credentials: asks Cloudflare with the key and keeps only the two useful relay addresses', async () => {
+  const { calls, fetcher } = cloudflare(CF_REPLY);
+  const servers = await turnServers('a'.repeat(32), 'secret-token', fetcher);
+  assert.deepEqual(servers, [{ urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp'], username: 'user1', credential: 'pass1' }]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `https://rtc.live.cloudflare.com/v1/turn/keys/${'a'.repeat(32)}/credentials/generate-ice-servers`);
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer secret-token');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { ttl: TURN_TTL_SECONDS });
+});
+
+test('relay credentials: no relay when it is not set up, the key ID is malformed, or Cloudflare fails', async () => {
+  const ok = cloudflare(CF_REPLY);
+  assert.deepEqual(await turnServers('', 'secret-token', ok.fetcher), []);
+  assert.deepEqual(await turnServers('a'.repeat(32), '', ok.fetcher), []);
+  assert.deepEqual(await turnServers('../../other', 'secret-token', ok.fetcher), []);
+  assert.equal(ok.calls.length, 0);
+  assert.deepEqual(await turnServers('a'.repeat(32), 'secret-token', cloudflare({ error: 'nope' }, 401).fetcher), []);
+  assert.deepEqual(await turnServers('a'.repeat(32), 'secret-token', cloudflare({ iceServers: 'x' }).fetcher), []);
+  assert.deepEqual(await turnServers('a'.repeat(32), 'secret-token', cloudflare({ iceServers: [{ urls: ['turn:turn.cloudflare.com:3478?transport=udp'] }] }).fetcher), []);
+  assert.deepEqual(await turnServers('a'.repeat(32), 'secret-token', async () => { throw new Error('offline'); }), []);
+});
+
+test('relay credentials: a daily limit per account', async () => {
+  const service = new SocialService(new MemoryStore(), () => 1_000);
+  for (let i = 0; i < 3; i++) await service.spend('alice', 'socialIceServers', 3);
+  await assert.rejects(service.spend('alice', 'socialIceServers', 3), (error) => error instanceof DomainError && error.code === 'resource-exhausted');
+  await service.spend('bob', 'socialIceServers', 3);
+  await assert.rejects(service.spend(null, 'socialIceServers', 3), (error) => error.code === 'unauthenticated');
+});

@@ -2,7 +2,7 @@
 
 > Draft, updated 2026-10-06 (review fixes: hiding a title deletes its review, a separate reading-progress switch, ranking pictures only while actually on the ranking; earlier the same day: ranking pictures and the all-time ranking; reading progress, ratings and reviews); 2026-10-03 to cover the global ranking, XP, private and group messages, push notifications, read-along requests, group rooms, "Let's read this" matches, reading-together recaps and translation. Served on the web at `/privacy.html` (see [web integration](WEB_INTEGRATION.md)).
 
-**Operator:** Berti (Mihon Together) · **Contact:** [GitHub issues](https://github.com/berti12423/MihonTogether/issues) (ask for a private channel for anything personal) · **Last updated:** 9 October 2026
+**Operator:** Berti (Mihon Together) · **Contact:** [GitHub issues](https://github.com/berti12423/MihonTogether/issues) (ask for a private channel for anything personal) · **Last updated:** 16 November 2026
 
 ## Short version
 
@@ -74,7 +74,7 @@ If you turn on Discord status in the settings, the app tells the Discord app on 
 
 The website shows the same data as the app with the same rules. To show covers, your browser looks up titles on AniList's public API (graphql.anilist.co) and remembers the results in your browser for 30 days. The download page serves the app's installation file.
 
-**My library on the website.** When you open "My library" on the website, your browser connects directly to your own phone (signed in to the same account) over an encrypted WebRTC connection, and your library, covers and pages travel straight from the phone to the browser. They are not stored on our servers. To set up the connection, the phone and the browser exchange a few short technical messages through our database: your phone's name (for example "Galaxy A35"), the app's build number and the connection details (network addresses). Only you can read them, and they are deleted automatically within minutes (at most 15). During setup both sides ask Google's public STUN server (stun.l.google.com) for their public IP address, as every WebRTC connection does. Reading progress you make on the website is saved on your phone like reading in the app. You can turn this off in the app under Friends → Me ("Library on the web").
+**My library on the website.** When you open "My library" on the website, your browser connects to your own phone (signed in to the same account) over an end-to-end encrypted WebRTC connection, and your library, covers and pages travel from the phone to the browser. They are not stored on any server. When the two can't reach each other directly (for example the phone is on mobile data), the encrypted data passes through a relay run by Cloudflare (Cloudflare Realtime TURN). The relay cannot read it; like any server it sees the IP addresses of both sides and how much data passes. To set up the connection, the phone and the browser exchange a few short technical messages through our database: your phone's name (for example "Galaxy A35"), the app's build number and the connection details (network addresses). Only you can read them, and they are deleted automatically within minutes (at most 15). During setup both sides ask Google's public STUN server (stun.l.google.com) for their public IP address, as every WebRTC connection does, and get short-lived relay access from our server. Reading progress you make on the website is saved on your phone like reading in the app. You can turn this off in the app under Friends → Me ("Library on the web").
 
 ## Technical and abuse-prevention data
 
@@ -84,7 +84,7 @@ The website shows the same data as the app with the same rules. To show covers, 
 
 ## Where data is processed
 
-Data is stored with Google Firebase (Cloud Firestore, Realtime Database, Cloud Functions, Authentication, Cloud Storage, Cloud Messaging) in the European Union (Google Cloud region europe-west1, Belgium). Google acts as our processor; see Google's Firebase privacy information.
+Data is stored with Google Firebase (Cloud Firestore, Realtime Database, Cloud Functions, Authentication, Cloud Storage, Cloud Messaging) in the European Union (Google Cloud region europe-west1, Belgium). Google acts as our processor; see Google's Firebase privacy information. The "My library" relay described above is run by Cloudflare, which only forwards encrypted data and stores none of it.
 
 ## Your rights and choices
 

@@ -32,6 +32,7 @@ backend/.firebase/
 backend/production.json
 backend/.env.*
 !backend/.env.example
+backend/.secret.local
 
 # Discord Social SDK (proprietary; downloaded by the developer, never committed)
 third_party/discord-social-sdk/

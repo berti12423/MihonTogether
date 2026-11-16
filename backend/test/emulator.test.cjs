@@ -811,3 +811,16 @@ test('deleting an account leaves a room of three going for the other two', async
   await assertSucceeds(getDocFromServer(doc(b.db, `rooms/${room.roomId}`)));
   await b.call('socialRoomMessage', { operationId: op(), roomId: room.roomId, kind: 'text', text: 'still here', emoji: null });
 });
+
+test('web library relay: signed-in accounts get a list (empty while no relay key is set up), others nothing', async () => {
+  const a = await account('alice');
+  assert.deepEqual(await a.call('socialIceServers', {}), { iceServers: [] });
+  assert.equal((await adminDb.doc(`quotas/${a.uid}`).get()).data().counts.socialIceServers, 1);
+  const { getFunctions, httpsCallable, connectFunctionsEmulator } = require('firebase/functions');
+  const { initializeApp, deleteApp } = require('firebase/app');
+  const anonymous = initializeApp({ projectId: PROJECT, apiKey: 'demo' }, `anon-${op()}`);
+  const functions = getFunctions(anonymous, 'europe-west1');
+  connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+  await callableFails(httpsCallable(functions, 'socialIceServers')({}), 'unauthenticated');
+  await deleteApp(anonymous);
+});

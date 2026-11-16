@@ -2,6 +2,12 @@
 
 The first section is what the app shows in its update screen (through `apk.json` on the website). Newest first; write for readers, not developers.
 
+## November 16, 2026: My library from anywhere
+
+- This one installs normally over your current app.
+- **My library on the website now works from any network:** your phone can be on mobile data or another Wi-Fi than your computer. It still connects directly when it can (same Wi-Fi is fastest); otherwise the pages pass through a relay, encrypted so the relay can't read them.
+- On mobile data, reading on the website uses your phone's data plan (a chapter is roughly 20 to 50 MB).
+
 ## October 21, 2026: Find what friends are reading, Mihon 0.21.2
 
 - **Find what a friend is reading:** on a friend's profile, "Find this series" sits next to "Ask to read along" while they're reading. It opens the title if it's in your library, otherwise it searches their source (if you have it) or all your sources.

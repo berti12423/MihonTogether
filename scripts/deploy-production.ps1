@@ -25,7 +25,9 @@ if (-not $SkipTests) {
 
 # Per-project function environment (git-ignored). See docs/FIREBASE_SETUP.md about App Check.
 $envFile = Join-Path $repo "backend\.env.$($config.projectId)"
-"ENFORCE_APP_CHECK=$(if ($config.enforceAppCheck) { 'true' } else { 'false' })" | Set-Content -NoNewline $envFile
+# Only ENFORCE_APP_CHECK is set here; other lines (e.g. TURN_KEY_ID for the web library relay) are kept.
+$kept = if (Test-Path $envFile) { @(Get-Content $envFile | Where-Object { $_ -notmatch '^ENFORCE_APP_CHECK=' -and $_.Trim() }) } else { @() }
+(@("ENFORCE_APP_CHECK=$(if ($config.enforceAppCheck) { 'true' } else { 'false' })") + $kept) -join "`n" | Set-Content -NoNewline $envFile
 
 # Optional: publish the APK as a GitHub release asset of `releasesRepo` ("owner/name", needs `gh auth login`), so
 # downloads don't count against Hosting traffic. The site keeps its own copy while older apps still use it

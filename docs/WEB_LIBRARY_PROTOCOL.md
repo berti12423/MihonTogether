@@ -35,7 +35,8 @@ Both sides write directly with the Firestore SDK (no callables). The rules (`bac
 
 - Updates may change only `answer` and `state`; `state` can't go back to `offered`.
 - **No trickle ICE.** Each side waits for ICE gathering to finish (`iceGatheringState == complete`) **or 3 seconds, whichever comes first**, then writes its local description's SDP (which then includes the gathered candidates). This keeps signaling to 2 writes per connection.
-- ICE servers on both sides: `[{ urls: 'stun:stun.l.google.com:19302' }]`. No TURN.
+- ICE servers on both sides: `[{ urls: 'stun:stun.l.google.com:19302' }]` plus the relay (TURN) servers from the `socialIceServers` callable (since 2026-11-16; see `docs/SOCIAL_API.md`). Each side asks for its own before it creates its peer connection (4 s limit). An empty list, an error or a timeout means STUN only, so the connection is direct-only as before. ICE prefers a direct path; the relay carries the same DTLS-encrypted channel only when no direct path works (e.g. the phone on mobile data).
+- The phone gathers on Wi-Fi/Ethernet and mobile data (not VPN or loopback adapters).
 - Same Wi-Fi: Chrome hides its own LAN address behind an `.local` mDNS name; that's fine, because the phone's host candidates are plain IPs and the browser's checks to them create a peer-reflexive candidate on the phone.
 
 ### Flow
@@ -45,7 +46,7 @@ Both sides write directly with the Firestore SDK (no callables). The rules (`bac
 3. Web: listens to its link; on `answered` it calls `setRemoteDescription(answer)`. When the data channel opens, it sends `hello`.
 4. One browser session per phone: a new offer for the same phone closes the previous connection.
 5. Closing: whoever ends the session sets `state: 'closed'` (or the web deletes the link). The phone also closes the connection when the data channel closes or the peer connection goes `failed`/`closed`, after **15 minutes without requests**, or when the user taps Disconnect in the notification.
-6. Web timeouts: no answer in 20 s → "Your phone didn't answer. Open Mihon Together on it and try again." Answer but no open channel in 15 s → "Couldn't connect. Make sure your phone and computer are on the same Wi-Fi."
+6. Web timeouts: no answer in 20 s → "Your phone didn't answer. Open Mihon Together on it and try again." Answer but no open channel in 15 s → "Couldn't connect. Check the internet connection on your phone and on this computer, then try again."
 
 ## 2. Data channel messages
 

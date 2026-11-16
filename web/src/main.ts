@@ -1133,7 +1133,7 @@ function downloadView(): HTMLElement {
         h("li", {}, "Open Mihon Together → More → Friends to create your account. Sharing with friends starts on; you can turn anything off.")),
       h("h3", {}, "Read on your computer"),
       h("p", {}, "Sign in here with the same account and open ", link("/my-library", "My library"),
-        ": this website connects straight to your phone and shows its library, chapters and pages. Keep the app open on the phone, best on the same Wi-Fi."),
+        ": this website connects straight to your phone and shows its library, chapters and pages. Keep the app open on the phone. It works from any network and is fastest on the same Wi-Fi."),
       h("p", {}, "Raw pages can be translated there too, fully on your PC: ", link("/translator", "get the translator"), "."),
       h("p", { class: "muted small" }, "This is a test build, installed next to Mihon (it doesn't replace it). The app tells you when a new version is out. Made by Berti.")));
     return () => undefined;

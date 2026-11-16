@@ -2,10 +2,12 @@
 // with Firestore signaling (non-trickle, 2 writes per connection), and runs the protocol client over it.
 // Contract: docs/WEB_LIBRARY_PROTOCOL.md. Rules: backend/firestore.rules (libraryHosts, libraryLinks).
 import { collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from "firebase/firestore";
-import { db } from "../firebase";
-import { ConnectProblem, Hello, PROTOCOL_VERSION, ProtocolClient, ProtocolError, protocolMismatch } from "./protocol";
+import { httpsCallable } from "firebase/functions";
+import { db, functions } from "../firebase";
+import { ConnectProblem, DIRECT_ICE, Hello, iceServersFrom, PROTOCOL_VERSION, ProtocolClient, ProtocolError, protocolMismatch } from "./protocol";
 
-export const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+export const ICE_SERVERS: RTCIceServer[] = DIRECT_ICE;
+const ICE_MS = 4_000;
 const GATHER_MS = 3_000;
 const ANSWER_MS = 20_000;
 const OPEN_MS = 15_000;
@@ -30,6 +32,18 @@ export function watchPhones(uid: string, onPhones: (phones: Phone[]) => void, on
   // A phone that stops heartbeating disappears once its expiresAt passes, without a new snapshot.
   const timer = setInterval(emit, 15_000);
   return () => { stop(); clearInterval(timer); };
+}
+
+/**
+ * Direct plus relay servers, so the phone can be on another network (mobile data, another Wi-Fi). The relay only
+ * forwards the encrypted channel and is used when no direct path works. Falls back to direct only on any failure.
+ */
+export async function relayIceServers(): Promise<RTCIceServer[]> {
+  try {
+    return iceServersFrom((await withTimeout(httpsCallable(functions, "socialIceServers")({}), ICE_MS, () => new Error("timeout"))).data);
+  } catch {
+    return ICE_SERVERS;
+  }
 }
 
 export class ConnectError extends Error {
@@ -107,19 +121,17 @@ export class PhoneLink {
   status: LinkStatus = "connecting";
   hello: Hello | null = null;
   onLost: (() => void) | null = null;
-  private readonly pc: RTCPeerConnection;
-  private readonly channel: RTCDataChannel;
+  // Both are created in connect(), once the ICE servers are known.
+  private pc: RTCPeerConnection | null = null;
+  private channel: RTCDataChannel | null = null;
 
-  constructor(private readonly signaling: Signaling, private readonly expectedProtocol: number | null = null) {
+  constructor(private readonly signaling: Signaling, private readonly expectedProtocol: number | null = null,
+    private readonly iceServers: () => Promise<RTCIceServer[]> = async () => ICE_SERVERS) {
     if (typeof RTCPeerConnection === "undefined") throw new ConnectError("unsupported_browser");
-    this.pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    this.channel = this.pc.createDataChannel("library", { ordered: true });
-    this.channel.binaryType = "arraybuffer";
     this.client = new ProtocolClient((text) => {
-      if (this.channel.readyState !== "open") throw new Error("The connection is closed");
+      if (this.channel?.readyState !== "open") throw new Error("The connection is closed");
       this.channel.send(text);
     });
-    this.channel.onmessage = (event) => this.client.receive(event.data as string | ArrayBuffer);
     this.signaling.onClosed = () => this.lose();
   }
 
@@ -127,20 +139,26 @@ export class PhoneLink {
     try {
       const mismatch = this.expectedProtocol === null ? null : protocolMismatch(this.expectedProtocol);
       if (mismatch) throw new ConnectError(mismatch);
+      const iceServers = await this.iceServers();
+      if ((this.status as LinkStatus) === "closed") throw new ConnectError("lost");
+      const pc = this.pc = new RTCPeerConnection({ iceServers });
+      const channel = this.channel = pc.createDataChannel("library", { ordered: true });
+      channel.binaryType = "arraybuffer";
+      channel.onmessage = (event) => this.client.receive(event.data as string | ArrayBuffer);
       const opened = new Promise<void>((resolve, reject) => {
-        this.channel.onopen = () => resolve();
-        this.channel.onclose = () => reject(new ConnectError("no_connect"));
+        channel.onopen = () => resolve();
+        channel.onclose = () => reject(new ConnectError("no_connect"));
       });
       opened.catch(() => undefined); // awaited below; a close during signaling must not be an unhandled rejection
-      await this.pc.setLocalDescription(await this.pc.createOffer());
-      await waitForGathering(this.pc);
-      const answer = await this.signaling.exchange(this.pc.localDescription!.sdp);
+      await pc.setLocalDescription(await pc.createOffer());
+      await waitForGathering(pc);
+      const answer = await this.signaling.exchange(pc.localDescription!.sdp);
       if (this.status === "closed") throw new ConnectError("lost");
-      await this.pc.setRemoteDescription({ type: "answer", sdp: answer });
+      await pc.setRemoteDescription({ type: "answer", sdp: answer });
       await withTimeout(opened, OPEN_MS, () => new ConnectError("no_connect"));
-      this.channel.onclose = () => this.lose();
-      this.pc.addEventListener("connectionstatechange", () => {
-        if (this.pc.connectionState === "failed" || this.pc.connectionState === "closed") this.lose();
+      channel.onclose = () => this.lose();
+      pc.addEventListener("connectionstatechange", () => {
+        if (pc.connectionState === "failed" || pc.connectionState === "closed") this.lose();
       });
       let hello: Hello;
       try {
@@ -177,8 +195,8 @@ export class PhoneLink {
     this.status = "closed";
     this.client.close(new ProtocolError("closed", "The connection to your phone was closed"));
     this.signaling.close();
-    try { this.channel.close(); } catch { /* already closed */ }
-    try { this.pc.close(); } catch { /* already closed */ }
+    try { this.channel?.close(); } catch { /* already closed */ }
+    try { this.pc?.close(); } catch { /* already closed */ }
   }
 }
 

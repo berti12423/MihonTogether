@@ -696,6 +696,9 @@ class SocialRepository(private val firebase: SocialFirebase, private val emulato
         }.sortedBy { it.seq }
     }
 
+    /** The raw `socialIceServers` reply: short-lived relay servers for the web library (may be empty). */
+    suspend fun iceServers(): Map<String, Any?> = call("socialIceServers", emptyMap())
+
     /** Sends a friend a light "keep reading" push (one per friend per 24 h; the backend enforces it). */
     suspend fun nudge(otherUid: String) {
         call("socialNudge", mutation("otherUid" to otherUid))

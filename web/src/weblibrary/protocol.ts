@@ -294,7 +294,7 @@ export type ConnectProblem = "no_answer" | "no_connect" | "phone_newer" | "phone
 export function problemText(problem: ConnectProblem | string): string {
   switch (problem) {
     case "no_answer": return "Your phone didn't answer. Open Mihon Together on it and try again.";
-    case "no_connect": return "Couldn't connect. Make sure your phone and computer are on the same Wi-Fi. If the phone uses AdGuard or a VPN, exclude Mihon Together in it.";
+    case "no_connect": return "Couldn't connect. Check the internet connection on your phone and on this computer, then try again. If the phone uses AdGuard or a VPN, exclude Mihon Together in it.";
     case "phone_newer": return "Your phone has a newer version of Mihon Together. Reload this page.";
     case "phone_older": return "Update Mihon Together on your phone to read your library here.";
     case "lost": return "The connection to your phone was lost.";
@@ -460,4 +460,20 @@ const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif
 export function safeImageType(contentType: string): string {
   const type = contentType.split(";")[0].trim().toLowerCase();
   return IMAGE_TYPES.has(type) ? type : "image/jpeg";
+}
+
+/** Finds each side's public address for a direct connection. Always used; relay servers are only a fallback. */
+export const DIRECT_ICE: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+const RELAY_URL = /^turns?:[a-z0-9.-]+:[0-9]{1,5}\?transport=(udp|tcp)$/;
+
+/** The ICE servers for a connection from the `socialIceServers` reply: direct first, then its valid relay servers. */
+export function iceServersFrom(reply: unknown): RTCIceServer[] {
+  const list = (reply as { iceServers?: unknown } | null)?.iceServers;
+  if (!Array.isArray(list)) return DIRECT_ICE;
+  const relays = list.flatMap((server: { urls?: unknown; username?: unknown; credential?: unknown } | null) => {
+    const urls = (Array.isArray(server?.urls) ? server.urls : []).filter((url): url is string => typeof url === "string" && RELAY_URL.test(url));
+    return urls.length && typeof server?.username === "string" && typeof server.credential === "string"
+      ? [{ urls, username: server.username, credential: server.credential }] : [];
+  });
+  return [...DIRECT_ICE, ...relays.slice(0, 4)];
 }

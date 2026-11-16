@@ -1715,7 +1715,7 @@
     <string name="data_usage_reset">Reset</string>
     <!-- Library on the web (2026-10-09, docs/WEB_LIBRARY_PROTOCOL.md) -->
     <string name="web_library_setting">Library on the web</string>
-    <string name="web_library_setting_summary">Read your library in your browser while signed in to this account. The browser connects directly to this phone; nothing is uploaded.</string>
+    <string name="web_library_setting_summary">Read your library in your browser while signed in to this account. The browser connects to this phone over an encrypted connection, from any network; nothing is stored on a server. On mobile data it uses your data plan.</string>
     <string name="web_library_share">Share library with my browser</string>
     <string name="web_library_share_hint">Keeps this phone available for 15 minutes. On your computer, open %1$s with the same account.</string>
     <string name="web_library_available">Available for 15 minutes. Open %1$s on your computer.</string>

@@ -258,7 +258,7 @@ test("routes: list, title and reader; anything else is not My library", () => {
 
 test("error texts from the protocol doc, and which side to update", () => {
   assert.equal(p.problemText("no_answer"), "Your phone didn't answer. Open Mihon Together on it and try again.");
-  assert.equal(p.problemText("no_connect"), "Couldn't connect. Make sure your phone and computer are on the same Wi-Fi. If the phone uses AdGuard or a VPN, exclude Mihon Together in it.");
+  assert.equal(p.problemText("no_connect"), "Couldn't connect. Check the internet connection on your phone and on this computer, then try again. If the phone uses AdGuard or a VPN, exclude Mihon Together in it.");
   assert.equal(p.protocolMismatch(1), null);
   assert.equal(p.protocolMismatch(2), "phone_newer");
   assert.equal(p.protocolMismatch(0), "phone_older");
@@ -350,4 +350,18 @@ test("progress goes out at most every 5 s, on leave, and as read at the last pag
   throttle.flush();
   timers.advance(10_000);
   assert.equal(sent.length, 4);
+});
+
+test("relay servers: the direct server is always first, valid relay entries follow, anything else is dropped", () => {
+  const relay = { urls: ["turn:turn.cloudflare.com:3478?transport=udp", "turns:turn.cloudflare.com:443?transport=tcp"], username: "u", credential: "c" };
+  assert.deepEqual(p.iceServersFrom({ iceServers: [relay] }), [...p.DIRECT_ICE, relay]);
+  for (const bad of [null, undefined, "x", {}, { iceServers: "x" }, { iceServers: [] }, { iceServers: [null, 5] },
+    { iceServers: [{ urls: ["https://evil.example"], username: "u", credential: "c" }] },
+    { iceServers: [{ urls: ["turn:turn.cloudflare.com:3478?transport=udp"] }] },
+    { iceServers: [{ urls: [], username: "u", credential: "c" }] }]) {
+    assert.deepEqual(p.iceServersFrom(bad), p.DIRECT_ICE);
+  }
+  assert.equal(p.iceServersFrom({ iceServers: Array(20).fill(relay) }).length, 1 + 4);
+  assert.match(p.problemText("no_connect"), /internet/);
+  assert.doesNotMatch(p.problemText("no_connect"), /same Wi-Fi/);
 });

@@ -3,7 +3,7 @@
 // The section draws itself (it changes with the connection, not with the rest of the site's state); main.ts just
 // places [myLibraryPage]'s element and tells it about sign-in changes.
 import { h, replace } from "../dom";
-import { ConnectError, firestoreSignaling, Phone, PhoneLink, Signaling, watchPhones } from "./connection";
+import { ConnectError, firestoreSignaling, Phone, PhoneLink, relayIceServers, Signaling, watchPhones } from "./connection";
 import {
   Chapter, chapterLabel, continueChapter, coverKey, filterLibrary, initialLayout, keepWindow, LibraryList, LibraryManga, LibraryRoute,
   MangaDetails, nextChapter, pageStep, parseLibraryRoute, prefetchPages, problemText, ProgressThrottle, ReaderLayout, requestErrorText,
@@ -118,7 +118,9 @@ function connect(phone: { deviceId: string; name: string; protocol?: number }, s
   session.problem = null;
   let link: PhoneLink;
   try {
-    link = new PhoneLink(signaling ?? firestoreSignaling(session.uid!, phone.deviceId), phone.protocol ?? null);
+    // The in-page test phone (a given signaling) needs no relay.
+    link = signaling ? new PhoneLink(signaling, phone.protocol ?? null)
+      : new PhoneLink(firestoreSignaling(session.uid!, phone.deviceId), phone.protocol ?? null, relayIceServers);
   } catch (error) {
     fail(error);
     return;
@@ -244,7 +246,7 @@ function draw(path: string): void {
 /** What this page is, under the connection card while not connected. */
 function intro(): HTMLElement {
   return h("p", { class: "muted small" },
-    "Read the library on your phone here. Your phone sends covers and pages straight to this browser over an encrypted connection; nothing is uploaded. Best on the same Wi-Fi. ",
+    "Read the library on your phone here. Your phone sends covers and pages to this browser over an encrypted connection; nothing is stored on a server. It works from any network and is fastest on the same Wi-Fi. ",
     "Raw pages can be translated on this PC with the ", host.link("/translator", "Mihon Together Translator"), ".");
 }
 

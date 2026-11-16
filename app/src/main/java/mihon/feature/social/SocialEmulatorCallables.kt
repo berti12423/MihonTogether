@@ -93,5 +93,5 @@ internal val SOCIAL_CALLABLE_NAMES = setOf(
     "socialRegisterDevice", "socialMessage", "socialJoinRequest", "socialGroupChat", "socialReadWish",
     "socialReview", "socialNudge",
     // ACCOUNT_CALLABLES
-    "socialDeleteAccount",
+    "socialDeleteAccount", "socialIceServers",
 )

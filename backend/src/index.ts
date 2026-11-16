@@ -8,10 +8,12 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onValueWritten } from "firebase-functions/v2/database";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { setGlobalOptions } from "firebase-functions/v2/options";
+import { defineSecret } from "firebase-functions/params";
 import { CallableName, DomainError, MediaStore, Notifier, SocialService } from "./domain.js";
 import { createFirestoreStore } from "./firestore-store.js";
 import { clearExpiredGroupPreviews, closeExpiredRooms } from "./cleanup.js";
 import { deleteAccount } from "./account-deletion.js";
+import { ICE_SERVERS_PER_DAY, turnServers } from "./turn.js";
 
 setGlobalOptions({ region: "europe-west1", maxInstances: 10 });
 /**
@@ -111,6 +113,20 @@ export const socialDeleteAccount = onCall({ enforceAppCheck, invoker: "public" }
   } catch {
     throw new HttpsError("internal", "Account deletion failed. Try again.");
   }
+});
+
+/**
+ * Relay servers for the web library (phone and browser on different networks). The Cloudflare TURN key: its ID in
+ * TURN_KEY_ID (backend/.env.<projectId>), its token in the TURN_KEY_API_TOKEN secret. Without them the list is empty.
+ */
+const turnToken = defineSecret("TURN_KEY_API_TOKEN");
+export const socialIceServers = onCall({ enforceAppCheck, invoker: "public", secrets: [turnToken] }, async (request) => {
+  try { await service.spend(request.auth?.uid ?? null, "socialIceServers", ICE_SERVERS_PER_DAY); }
+  catch (error) {
+    if (error instanceof DomainError) throw new HttpsError(error.code, error.message);
+    throw new HttpsError("internal", "Social operation failed.");
+  }
+  return { iceServers: await turnServers(process.env.TURN_KEY_ID ?? "", turnToken.value()) };
 });
 
 // RTDB triggers must run in the database's region. The emulator's database is always us-central1.

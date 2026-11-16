@@ -42,7 +42,7 @@ export const CALLABLES = ["socialGetSelf", "socialUpdateProfile", "socialLookupH
   "socialNudge"] as const;
 export type CallableName = typeof CALLABLES[number];
 /** Callables implemented outside SocialService (they need queries / Admin APIs). Clients allow-list both lists. */
-export const ACCOUNT_CALLABLES = ["socialDeleteAccount"] as const;
+export const ACCOUNT_CALLABLES = ["socialDeleteAccount", "socialIceServers"] as const;
 
 const VISIBILITY_FIELDS = ["library", "favorites", "activity", "presence", "lastSeen", "feed", "stats"] as const;
 const FEED_KINDS = ["chapter_read", "favorite_added"];
@@ -498,6 +498,12 @@ export class SocialService {
     });
     if (outbox.length && this.notifier) await this.notifier.send(outbox);
     return result;
+  }
+
+  /** Counts one call of a callable implemented outside this class against its daily [limit] and the total. */
+  async spend(actor: string | null, name: string, limit: number): Promise<void> {
+    if (!actor) fail("unauthenticated", "Sign in first.");
+    await this.store.transact((tx) => this.dailyQuota(tx, actor, name, limit, this.clock()));
   }
 
   /** Counts one call under [name] (a callable, or a separate key such as reactions) against [limit] and the total. */
