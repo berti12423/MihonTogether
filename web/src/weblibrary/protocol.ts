@@ -477,3 +477,104 @@ export function iceServersFrom(reply: unknown): RTCIceServer[] {
   });
   return [...DIRECT_ICE, ...relays.slice(0, 4)];
 }
+
+export type KeeperState = "connected" | "reconnecting" | "closed";
+
+/**
+ * Keeps a session going through a dropped connection (a network blip, the phone switching networks). After [lost]
+ * it opens new connections with [reconnect], with [pauseMs] between failed attempts, for [windowMs]. Requests made
+ * meanwhile wait, and one cut off by the drop (`closed`) is sent once more on the new connection. Gives up with
+ * state `closed`: waiting and later requests then fail with `closed`.
+ */
+export class LinkKeeper<L> {
+  state: KeeperState = "connected";
+  onChange: ((state: KeeperState, link: L | null) => void) | null = null;
+  private waiters: { resolve: (link: L) => void; reject: (error: ProtocolError) => void }[] = [];
+  private pause: unknown = null;
+  private readonly timers: Timers;
+  private readonly now: () => number;
+  private readonly windowMs: number;
+  private readonly pauseMs: number;
+
+  constructor(private link: L, private readonly reconnect: () => Promise<L>, private readonly dispose: (link: L) => void,
+    options: { timers?: Timers; now?: () => number; windowMs?: number; pauseMs?: number } = {}) {
+    this.timers = options.timers ?? realTimers;
+    this.now = options.now ?? Date.now;
+    this.windowMs = options.windowMs ?? 120_000;
+    this.pauseMs = options.pauseMs ?? 3_000;
+  }
+
+  get current(): L { return this.link; }
+
+  /** Runs [call] on a working connection: right away, or once one is back. */
+  async send<T>(call: (link: L) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      const link = await this.ready(signal);
+      try {
+        return await call(link);
+      } catch (error) {
+        const dropped = (error as ProtocolError)?.code === "closed" && (this.state === "reconnecting" || this.link !== link);
+        if (attempt > 0 || !dropped) throw error;
+      }
+    }
+  }
+
+  /** [link] stopped working. Reports about an older connection are ignored. */
+  lost(link: L): void {
+    if (this.state !== "connected" || link !== this.link) return;
+    this.state = "reconnecting";
+    this.onChange?.("reconnecting", link);
+    void this.attempt(this.now() + this.windowMs);
+  }
+
+  /** Ends the session: no more attempts, waiting requests fail. */
+  close(): void {
+    if (this.state === "closed") return;
+    this.state = "closed";
+    if (this.pause !== null) { this.timers.clearTimeout(this.pause); this.pause = null; }
+    this.fail();
+  }
+
+  private ready(signal?: AbortSignal): Promise<L> {
+    if (signal?.aborted) return Promise.reject(new ProtocolError("aborted", "Cancelled"));
+    if (this.state === "connected") return Promise.resolve(this.link);
+    if (this.state === "closed") return Promise.reject(closedError());
+    return new Promise((resolve, reject) => {
+      const waiter = { resolve: (link: L) => { signal?.removeEventListener("abort", onAbort); resolve(link); },
+        reject: (error: ProtocolError) => { signal?.removeEventListener("abort", onAbort); reject(error); } };
+      const onAbort = () => { this.waiters = this.waiters.filter((w) => w !== waiter); reject(new ProtocolError("aborted", "Cancelled")); };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.waiters.push(waiter);
+    });
+  }
+
+  private async attempt(deadline: number): Promise<void> {
+    this.pause = null;
+    if (this.state !== "reconnecting") return;
+    let link: L;
+    try {
+      link = await this.reconnect();
+    } catch {
+      if (this.state !== "reconnecting") return;
+      if (this.now() >= deadline) {
+        this.state = "closed";
+        this.fail();
+        this.onChange?.("closed", null);
+      } else {
+        this.pause = this.timers.setTimeout(() => void this.attempt(deadline), this.pauseMs);
+      }
+      return;
+    }
+    if (this.state !== "reconnecting") { this.dispose(link); return; }
+    this.link = link;
+    this.state = "connected";
+    const waiting = this.waiters.splice(0);
+    this.onChange?.("connected", link);
+    for (const waiter of waiting) waiter.resolve(link);
+  }
+
+  private fail(): void {
+    for (const waiter of this.waiters.splice(0)) waiter.reject(closedError());
+  }
+}
+const closedError = () => new ProtocolError("closed", "The connection to your phone was closed");

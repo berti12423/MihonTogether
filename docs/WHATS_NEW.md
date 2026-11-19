@@ -2,6 +2,12 @@
 
 The first section is what the app shows in its update screen (through `apk.json` on the website). Newest first; write for readers, not developers.
 
+## November 19, 2026: My library keeps going through connection drops
+
+- This one installs normally over your current app.
+- **A dropped connection no longer closes your chapter:** if your phone or computer loses the internet for a moment, the website keeps what's loaded, shows "Reconnecting…", and picks up again by itself. Pages you turn to meanwhile load as soon as it's back.
+- The phone stays reachable for a few minutes after a drop, so this works with its screen off too.
+
 ## November 16, 2026: My library from anywhere
 
 - This one installs normally over your current app.

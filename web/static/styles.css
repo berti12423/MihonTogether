@@ -192,6 +192,7 @@ label.button input[type="file"] { display: none; }
 .wl-status { padding: 8px 12px; margin: 8px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
 .wl-status button { margin: 0; }
 .dot.wl-dot { position: static; display: inline-block; vertical-align: middle; border-color: var(--card); }
+.dot.wl-dot.wait { background: #f9a825; }
 .wl-tabs { margin: 4px 0; }
 a.wl-tile { display: block; color: inherit; text-decoration: none; }
 a.wl-tile:focus-visible .cover, a.wl-tile:hover .cover { outline: 2px solid var(--accent); outline-offset: 2px; }

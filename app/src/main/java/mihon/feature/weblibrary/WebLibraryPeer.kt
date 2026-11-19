@@ -103,7 +103,8 @@ class WebLibraryPeer(
     context: Context,
     relays: List<WebLibraryRelay>,
     private val onText: (String) -> Unit,
-    private val onClosed: () -> Unit,
+    /** Runs once; `true` when the network path failed (rather than a close by either side). */
+    private val onClosed: (failed: Boolean) -> Unit,
 ) : WebLibrarySink {
     private val gathered = CompletableDeferred<Unit>()
     private val buffered = MutableStateFlow(0L)
@@ -132,9 +133,9 @@ class WebLibraryPeer(
         override fun onRenegotiationNeeded() = Unit
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
             Log.i(DIAG, "connection $state")
-            if (state == PeerConnection.PeerConnectionState.FAILED ||
-                state == PeerConnection.PeerConnectionState.CLOSED
-            ) {
+            if (state == PeerConnection.PeerConnectionState.FAILED) {
+                ended(failed = true)
+            } else if (state == PeerConnection.PeerConnectionState.CLOSED) {
                 ended()
             }
         }
@@ -210,10 +211,10 @@ class WebLibraryPeer(
         if (closed.get() || !dataChannel.send(buffer)) throw IOException("Web library channel closed")
     }
 
-    private fun ended() {
+    private fun ended(failed: Boolean = false) {
         if (!closed.compareAndSet(false, true)) return
         buffered.value = -1 // wakes paused senders
-        onClosed()
+        onClosed(failed)
     }
 
     /** Closes the channel and the connection. Never call it from a WebRTC callback (the native close waits on it). */

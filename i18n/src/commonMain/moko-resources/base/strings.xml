@@ -1718,7 +1718,7 @@
     <string name="web_library_setting_summary">Read your library in your browser while signed in to this account. The browser connects to this phone over an encrypted connection, from any network; nothing is stored on a server. On mobile data it uses your data plan.</string>
     <string name="web_library_share">Share library with my browser</string>
     <string name="web_library_share_hint">Keeps this phone available for 15 minutes. On your computer, open %1$s with the same account.</string>
-    <string name="web_library_available">Available for 15 minutes. Open %1$s on your computer.</string>
+    <string name="web_library_available">Available for your browser. Open %1$s on your computer.</string>
     <string name="web_library_stop">Stop sharing</string>
     <string name="web_library_connected">Your browser is reading your library.</string>
     <string name="web_library_disconnect">Disconnect</string>

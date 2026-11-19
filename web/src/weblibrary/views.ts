@@ -5,9 +5,9 @@
 import { h, replace } from "../dom";
 import { ConnectError, firestoreSignaling, Phone, PhoneLink, relayIceServers, Signaling, watchPhones } from "./connection";
 import {
-  Chapter, chapterLabel, continueChapter, coverKey, filterLibrary, initialLayout, keepWindow, LibraryList, LibraryManga, LibraryRoute,
-  MangaDetails, nextChapter, pageStep, parseLibraryRoute, prefetchPages, problemText, ProgressThrottle, ReaderLayout, requestErrorText,
-  safeImageType, startPage, tapStep, visibleCategories, ChapterPages,
+  BinaryResult, Chapter, chapterLabel, continueChapter, coverKey, filterLibrary, initialLayout, keepWindow, LibraryList,
+  LibraryManga, LibraryRoute, LinkKeeper, MangaDetails, nextChapter, pageStep, parseLibraryRoute, prefetchPages, problemText, ProgressThrottle,
+  ProtocolError, ReaderLayout, RequestOptions, requestErrorText, safeImageType, startPage, tapStep, visibleCategories, ChapterPages,
 } from "./protocol";
 import {
   cacheKey, healthText, indexedDbCache, pageTranslator, setTranslateOn, TranslationCache, TranslationQueue, translateOn, TranslatorError,
@@ -20,13 +20,19 @@ export interface Host {
   link(path: string, label: string): HTMLElement;
 }
 
-type Status = "idle" | "connecting" | "connected" | "lost" | "failed";
+/** `reconnecting`: the connection dropped; what's loaded stays and requests wait (LinkKeeper). */
+type Status = "idle" | "connecting" | "connected" | "reconnecting" | "lost" | "failed";
 interface Session {
   uid: string | null;
   phones: Phone[] | null;
   phonesError: string | null;
   stopPhones: (() => void) | null;
+  /** The newest connection (while connecting, connected or reconnecting). */
   link: PhoneLink | null;
+  /** Requests go through this; it restores the connection after a drop. Set once the first connection opened. */
+  keeper: LinkKeeper<PhoneLink> | null;
+  /** A reconnect attempt in progress (closed by Disconnect). */
+  trying: PhoneLink | null;
   /** The phone being connected or connected to (or last tried). */
   phone: { deviceId: string; name: string } | null;
   status: Status;
@@ -45,7 +51,7 @@ interface Session {
 
 let host: Host;
 const session: Session = {
-  uid: null, phones: null, phonesError: null, stopPhones: null, link: null, phone: null, status: "idle", problem: null,
+  uid: null, phones: null, phonesError: null, stopPhones: null, link: null, keeper: null, trying: null, phone: null, status: "idle", problem: null,
   autoTried: false, library: null, libraryError: null, libraryStale: false, details: new Map(), covers: new Map(),
   category: null, search: "", layouts: new Map(),
 };
@@ -61,7 +67,7 @@ let barKey = "";
 
 export function initWebLibrary(value: Host): void {
   host = value;
-  window.addEventListener("pagehide", () => { view?.stop(); view = null; session.link?.close(); });
+  window.addEventListener("pagehide", () => { view?.stop(); view = null; session.keeper?.close(); session.trying?.close(); session.link?.close(); });
 }
 
 /** Another part of the site is showing: the open page stops (the reader saves progress), the connection stays. */
@@ -110,17 +116,19 @@ function maybeAutoConnect(): void {
   connect(session.phones[0]);
 }
 
-function connect(phone: { deviceId: string; name: string; protocol?: number }, signaling?: Signaling): void {
+/** [signaling] makes the signaling for each connection (the development demo phone); Firestore otherwise. */
+function connect(phone: { deviceId: string; name: string; protocol?: number }, signaling?: () => Signaling): void {
   disconnect(false);
   session.autoTried = true;
   session.phone = { deviceId: phone.deviceId, name: phone.name };
   session.status = "connecting";
   session.problem = null;
+  // The in-page test phone (a given signaling) needs no relay.
+  const create = () => signaling ? new PhoneLink(signaling(), phone.protocol ?? null)
+    : new PhoneLink(firestoreSignaling(session.uid!, phone.deviceId), phone.protocol ?? null, relayIceServers);
   let link: PhoneLink;
   try {
-    // The in-page test phone (a given signaling) needs no relay.
-    link = signaling ? new PhoneLink(signaling, phone.protocol ?? null)
-      : new PhoneLink(firestoreSignaling(session.uid!, phone.deviceId), phone.protocol ?? null, relayIceServers);
+    link = create();
   } catch (error) {
     fail(error);
     return;
@@ -129,15 +137,34 @@ function connect(phone: { deviceId: string; name: string; protocol?: number }, s
   redraw();
   link.connect().then(() => {
     if (session.link !== link) return;
-    session.status = "connected";
-    link.onLost = () => {
-      if (session.link !== link) return;
-      dropConnectionData();
-      session.link = null;
-      session.status = "lost";
-      session.problem = problemText("lost");
+    const keeper = new LinkKeeper(link, async () => {
+      const next = create();
+      session.trying = next;
+      try { await next.connect(); return next; } finally { if (session.trying === next) session.trying = null; }
+    }, (late) => late.close());
+    const watch = (current: PhoneLink) => { current.onLost = () => keeper.lost(current); };
+    watch(link);
+    keeper.onChange = (state, current) => {
+      if (session.keeper !== keeper) return;
+      if (state === "reconnecting") {
+        session.status = "reconnecting";
+      } else if (state === "connected" && current) {
+        session.link?.close();
+        session.link = current;
+        watch(current);
+        session.status = "connected";
+      } else {
+        // Couldn't get it back in time: like before, the session ends.
+        session.keeper = null;
+        session.link = null;
+        dropConnectionData();
+        session.status = "lost";
+        session.problem = problemText("lost");
+      }
       redraw();
     };
+    session.keeper = keeper;
+    session.status = "connected";
     loadLibrary();
     redraw();
   }, (error) => { if (session.link === link) { session.link = null; fail(error); } });
@@ -154,8 +181,10 @@ function fail(error: unknown): void {
 /** Ends the session (Disconnect, sign-out, or before a new connection). */
 function disconnect(redrawAfter = true): void {
   view?.stop(); view = null;
-  const link = session.link;
-  session.link = null;
+  const link = session.link, keeper = session.keeper, trying = session.trying;
+  session.link = null; session.keeper = null; session.trying = null;
+  keeper?.close();
+  trying?.close();
   link?.close();
   dropConnectionData();
   session.status = "idle";
@@ -171,19 +200,31 @@ function dropConnectionData(): void {
   session.covers.clear();
 }
 
+/** A request to the phone; while the connection is being restored it waits (see LinkKeeper). */
+function request<T>(method: string, params: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<T> {
+  const keeper = session.keeper;
+  if (!keeper) return Promise.reject(new ProtocolError("closed", problemText("lost")));
+  return keeper.send((link) => link.client.request<T>(method, params, options), options.signal);
+}
+function requestBinary(method: string, params: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<BinaryResult> {
+  const keeper = session.keeper;
+  if (!keeper) return Promise.reject(new ProtocolError("closed", problemText("lost")));
+  return keeper.send((link) => link.client.requestBinary(method, params, options), options.signal);
+}
+
 function loadLibrary(): void {
-  const link = session.link;
-  if (!link) return;
+  const keeper = session.keeper;
+  if (!keeper) return;
   session.libraryError = null;
-  link.client.request<LibraryList>("library.list").then((list) => {
-    if (session.link !== link) return;
+  request<LibraryList>("library.list").then((list) => {
+    if (session.keeper !== keeper) return;
     session.library = { categories: list.categories ?? [], manga: list.manga ?? [] };
     session.libraryStale = false;
     // A cached grid shows the old list; build it again.
     if (view?.key.startsWith("list|")) { view.stop(); view = null; }
     redraw();
   }, (error) => {
-    if (session.link !== link) return;
+    if (session.keeper !== keeper) return;
     session.libraryError = requestErrorText(error);
     redraw();
   });
@@ -196,12 +237,11 @@ function blobUrl(result: { contentType: string; bytes: Uint8Array }): string {
 
 /** A title's cover as a blob URL (null when it has none), cached for the connection by mangaId + coverVersion. */
 function cover(manga: { mangaId: string; coverVersion: string }, signal?: AbortSignal): Promise<string | null> {
-  const link = session.link;
-  if (!link) return Promise.resolve(null);
+  if (!session.keeper) return Promise.resolve(null);
   const key = coverKey(manga);
   let entry = session.covers.get(key);
   if (!entry) {
-    entry = link.client.requestBinary("manga.cover", { mangaId: manga.mangaId, maxWidth: 300 }, { signal })
+    entry = requestBinary("manga.cover", { mangaId: manga.mangaId, maxWidth: 300 }, { signal })
       .then(blobUrl, (error) => {
         // Cancelled before it was sent (scrolled away): ask again next time it shows.
         if (error?.code === "aborted" || error?.code === "closed" || error?.code === "timeout" || error?.code === "busy") session.covers.delete(key);
@@ -213,11 +253,10 @@ function cover(manga: { mangaId: string; coverVersion: string }, signal?: AbortS
 }
 
 function details(mangaId: string): Promise<MangaDetails> {
-  const link = session.link;
-  if (!link) return Promise.reject(new Error(problemText("lost")));
+  if (!session.keeper) return Promise.reject(new Error(problemText("lost")));
   let entry = session.details.get(mangaId);
   if (!entry) {
-    entry = link.client.request<MangaDetails>("manga.details", { mangaId });
+    entry = request<MangaDetails>("manga.details", { mangaId });
     entry.catch(() => session.details.delete(mangaId));
     session.details.set(mangaId, entry);
   }
@@ -230,7 +269,8 @@ function draw(path: string): void {
   const route = parseLibraryRoute(path);
   if (!route) return;
   drawBar();
-  const connected = session.status === "connected" && session.link;
+  // Reconnecting keeps the page as it is: what's loaded stays, new requests wait.
+  const connected = (session.status === "connected" || session.status === "reconnecting") && session.keeper;
   const key = !connected ? `none|${session.status}`
     : route.view === "list" ? `list|${session.library ? "ready" : session.libraryError ?? "loading"}`
     : route.view === "manga" ? `manga|${route.mangaId}` : `reader|${route.chapterId}`;
@@ -267,6 +307,13 @@ function drawBar(): void {
         h("button", { class: "secondary", onclick: () => disconnect() }, "Disconnect")));
       return;
     }
+    case "reconnecting":
+      replace(bar, h("div", { class: "wl-status row between" },
+        h("span", { role: "status" }, h("span", { class: "dot wl-dot wait", "aria-hidden": "true" }), " Connection to ",
+          h("strong", {}, session.link?.hello?.deviceName || name), " lost. Reconnecting…",
+          h("span", { class: "muted small" }, " Pages you opened stay; new ones load when it's back.")),
+        h("button", { class: "secondary", onclick: () => disconnect() }, "Disconnect")));
+      return;
     case "connecting":
       replace(bar, h("section", { class: "card" }, h("h2", {}, "My library"),
         h("p", { role: "status" }, `Connecting to ${name}…`),
@@ -307,7 +354,7 @@ const DEMO_ID = "demo-phone-development";
 /** Development only: a fake phone in this page over a real WebRTC loopback. */
 function connectDemo(): void {
   if (__DEV_TOOLS__) {
-    import("./dev-loopback").then(({ loopbackSignaling }) => connect({ deviceId: DEMO_ID, name: "Demo phone" }, loopbackSignaling()));
+    import("./dev-loopback").then(({ loopbackSignaling }) => connect({ deviceId: DEMO_ID, name: "Demo phone" }, () => loopbackSignaling()));
   }
 }
 
@@ -458,7 +505,6 @@ let translationCache: TranslationCache | null = null;
 const TARGET = "en-US";
 
 function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element: HTMLElement; stop: () => void } {
-  const link = session.link!;
   const { mangaId, chapterId } = route;
   const back = host.link(`/my-library/${mangaId}`, "← Chapters");
   const title = h("strong", { class: "ellipsis grow" }, "Loading…");
@@ -590,7 +636,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
     if (entry) return entry;
     const controller = new AbortController();
     const created: PageImage = { url: null, controller, promise: Promise.resolve("") };
-    created.promise = link.client.requestBinary("page.image", { chapterId, index }, { signal: controller.signal }).then((result) => {
+    created.promise = requestBinary("page.image", { chapterId, index }, { signal: controller.signal }).then((result) => {
       const url = blobUrl(result);
       // Dropped while it loaded (left the chapter or scrolled far away): not needed any more.
       if (!alive || images.get(index) !== created) { URL.revokeObjectURL(url); throw new Error("dropped"); }
@@ -764,7 +810,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
     build();
   };
 
-  Promise.all([details(mangaId), link.client.request<ChapterPages>("chapter.pages", { chapterId })]).then(([loaded, pages]) => {
+  Promise.all([details(mangaId), request<ChapterPages>("chapter.pages", { chapterId })]).then(([loaded, pages]) => {
     if (!alive) return;
     manga = loaded;
     const chapter = loaded.chapters.find((c) => c.chapterId === chapterId) ?? null;
@@ -774,7 +820,7 @@ function readerView(route: Extract<LibraryRoute, { view: "reader" }>): { element
     if (!session.layouts.has(mangaId)) layout = initialLayout(loaded.readingMode);
     current = startPage(chapter, pageCount);
     throttle = new ProgressThrottle(pageCount, (lastPageRead, read) => {
-      link.client.request("chapter.progress", { chapterId, lastPageRead, read }).catch(() => undefined);
+      request("chapter.progress", { chapterId, lastPageRead, read }).catch(() => undefined);
     });
     if (translating) startTranslation();
     build();

@@ -225,7 +225,7 @@ class WebLibraryHost(
                         connection.session.receive(text)
                     }
                 },
-                onClosed = { holder.get()?.let { connection -> scope.launch { end(connection) } } },
+                onClosed = { failed -> holder.get()?.let { connection -> scope.launch { end(connection, failed) } } },
             )
         } catch (error: Throwable) {
             // E.g. the native library couldn't load on this device.
@@ -255,7 +255,8 @@ class WebLibraryHost(
         }
     }
 
-    private suspend fun end(connection: Connection) {
+    /** [failed]: the network path broke; the phone then stays available so the browser can reconnect. */
+    private suspend fun end(connection: Connection, failed: Boolean = false) {
         android.util.Log.i(
             WebLibraryPeer.DIAG,
             "session end after ${System.currentTimeMillis() - connection.openedAt} ms",
@@ -270,7 +271,10 @@ class WebLibraryHost(
         connection.session.close()
         connection.peer.close()
         connection.scope.cancel()
-        mutableState.value = state.value.copy(connected = false)
+        mutableState.value = state.value.copy(
+            connected = false,
+            availableUntil = availableAfterEnd(state.value.availableUntil, System.currentTimeMillis(), failed),
+        )
         updateService()
         if (repository.currentUid == connection.uid) {
             bestEffort("link close") { signaling.close(connection.uid, connection.linkId) }
@@ -315,6 +319,13 @@ class WebLibraryHost(
 
     companion object {
         const val AVAILABLE_MS = 15 * 60_000L
+
+        /** How long the browser gets to reconnect after a drop (its LinkKeeper tries for 2 minutes). */
+        const val RECONNECT_GRACE_MS = 3 * 60_000L
+
+        /** When the phone stops staying available after a session ended. */
+        fun availableAfterEnd(availableUntil: Long, now: Long, failed: Boolean): Long =
+            if (failed) maxOf(availableUntil, now + RECONNECT_GRACE_MS) else availableUntil
         const val IDLE_MS = 15 * 60_000L
         private const val NO_HELLO_MS = 60_000L
         private const val IDLE_CHECK_MS = 15_000L

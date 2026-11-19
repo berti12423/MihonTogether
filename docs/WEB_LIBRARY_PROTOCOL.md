@@ -46,7 +46,8 @@ Both sides write directly with the Firestore SDK (no callables). The rules (`bac
 3. Web: listens to its link; on `answered` it calls `setRemoteDescription(answer)`. When the data channel opens, it sends `hello`.
 4. One browser session per phone: a new offer for the same phone closes the previous connection.
 5. Closing: whoever ends the session sets `state: 'closed'` (or the web deletes the link). The phone also closes the connection when the data channel closes or the peer connection goes `failed`/`closed`, after **15 minutes without requests**, or when the user taps Disconnect in the notification.
-6. Web timeouts: no answer in 20 s → "Your phone didn't answer. Open Mihon Together on it and try again." Answer but no open channel in 15 s → "Couldn't connect. Check the internet connection on your phone and on this computer, then try again."
+6. Dropped connection (since 2026-11-16): when the data channel closes or the peer connection fails after it was connected, the web keeps the session (`LinkKeeper` in `protocol.ts`): what's loaded stays on screen, new requests wait, and requests the drop cut off (`closed`) are sent once more. It connects again with a new link document (same flow as above), 3 s between failed attempts, for 2 minutes; then it gives up and shows "The connection to your phone was lost." The phone, when its peer connection goes `failed` (not on a normal close), stays available for 3 minutes (`RECONNECT_GRACE_MS`, foreground service on) so the new offer is answered with the screen off.
+7. Web timeouts: no answer in 20 s → "Your phone didn't answer. Open Mihon Together on it and try again." Answer but no open channel in 15 s → "Couldn't connect. Check the internet connection on your phone and on this computer, then try again."
 
 ## 2. Data channel messages
 

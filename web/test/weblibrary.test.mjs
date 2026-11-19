@@ -365,3 +365,98 @@ test("relay servers: the direct server is always first, valid relay entries foll
   assert.match(p.problemText("no_connect"), /internet/);
   assert.doesNotMatch(p.problemText("no_connect"), /same Wi-Fi/);
 });
+
+// ---------- keeping a session through a dropped connection ----------
+/** A keeper whose reconnect attempts are scripted: each call waits until the test settles it. */
+function keeperHarness(windowMs = 120_000) {
+  const timers = fakeTimers();
+  const attempts = [], closed = [], changes = [];
+  const keeper = new p.LinkKeeper("link1", () => new Promise((resolve, reject) => attempts.push({ resolve, reject })),
+    (link) => closed.push(link), { timers, now: timers.now, windowMs, pauseMs: 3_000 });
+  keeper.onChange = (state, link) => changes.push([state, link]);
+  return { keeper, timers, attempts, closed, changes };
+}
+const closedError = () => new p.ProtocolError("closed", "Connection closed");
+
+test("a dropped connection pauses requests and sends them on the new one", async () => {
+  const { keeper, attempts, changes } = keeperHarness();
+  assert.equal(await keeper.send(async (link) => `${link}:a`), "link1:a");
+  keeper.lost("link1");
+  assert.equal(keeper.state, "reconnecting");
+  let result = null;
+  keeper.send(async (link) => `${link}:b`).then((value) => { result = value; });
+  await settle();
+  assert.equal(result, null); // waits while reconnecting
+  attempts[0].resolve("link2");
+  await settle(); await settle();
+  assert.equal(result, "link2:b");
+  assert.equal(keeper.state, "connected");
+  assert.deepEqual(changes, [["reconnecting", "link1"], ["connected", "link2"]]);
+});
+
+test("a request the drop cut off is sent again once on the new connection; other errors are not", async () => {
+  const { keeper, attempts } = keeperHarness();
+  const calls = [];
+  const pending = keeper.send(async (link) => {
+    calls.push(link);
+    if (link === "link1") { keeper.lost("link1"); throw closedError(); }
+    return "page";
+  });
+  await settle();
+  attempts[0].resolve("link2");
+  assert.equal(await pending, "page");
+  assert.deepEqual(calls, ["link1", "link2"]);
+  await assert.rejects(keeper.send(async () => { throw new p.ProtocolError("not_found", "x"); }), (error) => error.code === "not_found");
+  // A second drop during the retry isn't retried again.
+  const twice = assert.rejects(keeper.send(async (link) => { keeper.lost(link); throw closedError(); }), (error) => error.code === "closed");
+  await settle();
+  attempts[1].resolve("link3");
+  await twice;
+});
+
+test("failed attempts are retried after a pause until the window ends, then waiting requests fail", async () => {
+  const { keeper, timers, attempts, changes } = keeperHarness(10_000);
+  keeper.lost("link1");
+  const waiting = assert.rejects(keeper.send(async () => "never"), (error) => error.code === "closed");
+  attempts[0].reject(new Error("no answer"));
+  await settle();
+  assert.equal(attempts.length, 1);
+  timers.advance(3_000);
+  assert.equal(attempts.length, 2);
+  timers.advance(7_000); // the window is over while the second attempt runs
+  attempts[1].reject(new Error("no answer"));
+  await settle();
+  assert.equal(keeper.state, "closed");
+  assert.equal(attempts.length, 2);
+  await waiting;
+  await assert.rejects(keeper.send(async () => "x"), (error) => error.code === "closed");
+  assert.deepEqual(changes.at(-1), ["closed", null]);
+});
+
+test("closing while reconnecting stops trying and closes a connection that arrives late", async () => {
+  const { keeper, timers, attempts, closed } = keeperHarness();
+  keeper.lost("link1");
+  const waiting = keeper.send(async () => "x");
+  keeper.close();
+  await assert.rejects(waiting, (error) => error.code === "closed");
+  attempts[0].resolve("late");
+  await settle();
+  assert.deepEqual(closed, ["late"]);
+  timers.advance(60_000);
+  assert.equal(attempts.length, 1);
+  assert.equal(keeper.state, "closed");
+});
+
+test("a stale loss report (an old connection) is ignored, and an abort ends a waiting request", async () => {
+  const { keeper, attempts } = keeperHarness();
+  keeper.lost("link1");
+  attempts[0].resolve("link2");
+  await settle();
+  keeper.lost("link1");
+  assert.equal(keeper.state, "connected");
+  keeper.lost("link2");
+  const controller = new AbortController();
+  const waiting = keeper.send(async () => "x", controller.signal);
+  controller.abort();
+  await assert.rejects(waiting, (error) => error.code === "aborted");
+});

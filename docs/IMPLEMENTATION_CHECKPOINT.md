@@ -1,6 +1,14 @@
 # Multiplayer implementation checkpoint
 
-## Web library relay (2026-11-16, branch `feat/web-library-turn`, not deployed or released)
+## Web library reconnect (2026-11-16, branch `fix/web-library-reconnect`)
+
+A friend on build 8511 reported that a one-second internet drop ended "My library" with "connection lost" and threw away the open chapter. Cause: any `failed`/channel close ended the session (`onLost` → `dropConnectionData`). Now `LinkKeeper` (`web/src/weblibrary/protocol.ts`) keeps the session: requests wait while it reconnects (new offer, 3 s pause between failed attempts, 2 minutes), and requests cut off by the drop are resent once. All library requests in `views.ts` go through it (`request`/`requestBinary`); the bar shows "Reconnecting…". The phone (`WebLibraryPeer.onClosed(failed)`, `WebLibraryHost.availableAfterEnd`) stays available 3 minutes after a failed connection. Verified: 5 keeper tests, 3 phone tests, all web (79) and Android (409) unit tests, and the dev demo phone in the browser: cutting the phone's peer connection mid-chapter with two failing reconnect attempts kept the reader on screen, page 7 (not loaded yet) waited and loaded after the reconnect. **Not tested:** a real phone and network drop.
+
+## Released 2026-11-16: build 8511 (web library relay)
+
+Approved by Berti. `socialIceServers` deployed alone (`firebase deploy --only functions:social:socialIceServers`; Secret Manager API enabled, compute service account granted access to `TURN_KEY_API_TOKEN`); a signed-out call answers `UNAUTHENTICATED`. Hosting deployed through `deploy-production.ps1 -Only hosting` (verify-all passed: backend unit, emulators, web); the live `app.js` calls `socialIceServers`. `apk.json` offers 0.21.2-8511 from the GitHub release `build-8511` (arm64 48.5 MB, SHA-256 `E79F584E…FBCFDD5`, app ID `dev.mihontogether.reader.dev`, certificate `68f35fb3…23a9`). Public snapshot `07a65ce73` on `berti12423/MihonTogether` main. `deploy-production.ps1` now keeps other lines of `backend/.env.<project>` (it used to drop `TURN_KEY_ID`). **Not tested:** a signed-in relay connection in production, and a phone on mobile data.
+
+## Web library relay (2026-11-16, merged to `main`)
 
 "My library" on the website could only connect when the phone and the browser could reach each other directly (same Wi-Fi, or friendly NATs). Now a Cloudflare Realtime TURN relay is the fallback (Berti's decision; free up to 1,000 GB a month, then $0.05/GB). New callable `socialIceServers` (`backend/src/turn.ts`) hands signed-in accounts 12-hour relay credentials, 200 calls a day each; the long-term key never leaves the server. The website (`relayIceServers` in `web/src/weblibrary/connection.ts`) and the phone (`WebLibraryRelay`, `WebLibraryHost.accept`) each ask before creating the peer connection and fall back to STUN only on any failure. The phone no longer ignores the mobile-data adapter. Privacy policy, protocol and API docs updated.
 
