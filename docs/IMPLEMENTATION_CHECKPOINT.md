@@ -1,6 +1,14 @@
 # Multiplayer implementation checkpoint
 
-## Web library reconnect (2026-11-16, branch `fix/web-library-reconnect`)
+## Relay credential cache (2026-11-21, branch `fix/relay-credential-cache`)
+
+A friend's browser got `RESOURCE_EXHAUSTED` "Daily limit reached" from `socialIceServers` (200 calls per account per day). Cause: both sides fetched relay credentials for every connection, and since build 8516 the web reconnects every few seconds for 2 minutes, so a few shaky stretches used the day's calls; after that the web silently fell back to direct only, which can't work from his network. Now the credentials (valid 12 h) are reused for 4 h per side (`relayCache` in `web/src/weblibrary/protocol.ts`, `WebLibraryRelayCache` in `WebLibraryPeer.kt`, per account on the phone); a missing relay is retried after 5 minutes. Verified: web 80 tests, Android 412, new cache tests on both sides. The server limit is unchanged.
+
+## Released 2026-11-19: build 8516 (web library reconnect)
+
+Approved by Berti. Hosting deployed through `deploy-production.ps1 -Only hosting` (verify-all passed: backend unit, emulators, web); the live `app.js` has the reconnect bar. `apk.json` offers 0.21.2-8516 from the GitHub release `build-8516` (arm64 48.5 MB, SHA-256 `9EDEB1A8…2C004CECDD`, certificate `68f35fb3…23a9`). Public snapshot `68dc8ca2a` (the guard and its new test stay private). Same day: `floor-guard.mjs` reads "must not fall (today: N)" as a minimum (raises are clean, cuts are `threshold-loosened`), with its first tests in `scripts/floor-guard.test.mjs` (Berti approved). **Not tested:** a real phone and network drop.
+
+## Web library reconnect (2026-11-16, merged to `main`)
 
 A friend on build 8511 reported that a one-second internet drop ended "My library" with "connection lost" and threw away the open chapter. Cause: any `failed`/channel close ended the session (`onLost` → `dropConnectionData`). Now `LinkKeeper` (`web/src/weblibrary/protocol.ts`) keeps the session: requests wait while it reconnects (new offer, 3 s pause between failed attempts, 2 minutes), and requests cut off by the drop are resent once. All library requests in `views.ts` go through it (`request`/`requestBinary`); the bar shows "Reconnecting…". The phone (`WebLibraryPeer.onClosed(failed)`, `WebLibraryHost.availableAfterEnd`) stays available 3 minutes after a failed connection. Verified: 5 keeper tests, 3 phone tests, all web (79) and Android (409) unit tests, and the dev demo phone in the browser: cutting the phone's peer connection mid-chapter with two failing reconnect attempts kept the reader on screen, page 7 (not loaded yet) waited and loaded after the reconnect. **Not tested:** a real phone and network drop.
 

@@ -578,3 +578,25 @@ export class LinkKeeper<L> {
   }
 }
 const closedError = () => new ProtocolError("closed", "The connection to your phone was closed");
+
+/**
+ * Relay servers fetched at most once per [keepMs] (the credentials last 12 hours, so 4 leaves 8 for a session) and
+ * shared by connections and reconnects. When there's no relay (an error, the daily limit, not set up) it returns
+ * direct only and asks again after [retryMs].
+ */
+export function relayCache(fetch: () => Promise<RTCIceServer[]>, now: () => number = Date.now,
+  keepMs = 4 * 3_600_000, retryMs = 5 * 60_000): () => Promise<RTCIceServer[]> {
+  let servers: RTCIceServer[] = DIRECT_ICE, until = -Infinity;
+  let pending: Promise<RTCIceServer[]> | null = null;
+  return () => {
+    if (now() < until) return Promise.resolve(servers);
+    pending ??= fetch().catch(() => DIRECT_ICE).then((list) => {
+      const relayed = list.length > DIRECT_ICE.length;
+      servers = relayed ? list : DIRECT_ICE;
+      until = now() + (relayed ? keepMs : retryMs);
+      pending = null;
+      return servers;
+    });
+    return pending;
+  };
+}

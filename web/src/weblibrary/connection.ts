@@ -4,7 +4,7 @@
 import { collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "../firebase";
-import { ConnectProblem, DIRECT_ICE, Hello, iceServersFrom, PROTOCOL_VERSION, ProtocolClient, ProtocolError, protocolMismatch } from "./protocol";
+import { ConnectProblem, DIRECT_ICE, Hello, iceServersFrom, PROTOCOL_VERSION, ProtocolClient, ProtocolError, protocolMismatch, relayCache } from "./protocol";
 
 export const ICE_SERVERS: RTCIceServer[] = DIRECT_ICE;
 const ICE_MS = 4_000;
@@ -38,13 +38,8 @@ export function watchPhones(uid: string, onPhones: (phones: Phone[]) => void, on
  * Direct plus relay servers, so the phone can be on another network (mobile data, another Wi-Fi). The relay only
  * forwards the encrypted channel and is used when no direct path works. Falls back to direct only on any failure.
  */
-export async function relayIceServers(): Promise<RTCIceServer[]> {
-  try {
-    return iceServersFrom((await withTimeout(httpsCallable(functions, "socialIceServers")({}), ICE_MS, () => new Error("timeout"))).data);
-  } catch {
-    return ICE_SERVERS;
-  }
-}
+export const relayIceServers: () => Promise<RTCIceServer[]> = relayCache(async () =>
+  iceServersFrom((await withTimeout(httpsCallable(functions, "socialIceServers")({}), ICE_MS, () => new Error("timeout"))).data));
 
 export class ConnectError extends Error {
   constructor(readonly problem: ConnectProblem) { super(problem); }

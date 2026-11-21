@@ -2,6 +2,11 @@
 
 The first section is what the app shows in its update screen (through `apk.json` on the website). Newest first; write for readers, not developers.
 
+## November 21, 2026: fixes "Daily limit reached" in My library
+
+- This one installs normally over your current app.
+- **My library no longer runs into a daily limit:** reconnecting after connection drops used up the day's relay allowance, so the website could only connect on the same Wi-Fi until the next day. The relay access is now reused for hours instead of fetched for every attempt.
+
 ## November 19, 2026: My library keeps going through connection drops
 
 - This one installs normally over your current app.

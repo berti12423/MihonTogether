@@ -84,6 +84,11 @@ class WebLibraryHost(
 
     @Volatile private var started = false
 
+    // Shared by every connection and reconnect; the server allows 200 fetches per account and day.
+    private val relays = WebLibraryRelayCache {
+        withTimeoutOrNull(RELAY_TIMEOUT_MS) { WebLibraryRelay.parse(repository.iceServers()) }.orEmpty()
+    }
+
     private class Connection(
         val uid: String,
         val linkId: String,
@@ -206,13 +211,10 @@ class WebLibraryHost(
         val holder = AtomicReference<Connection?>(null)
         // Without relay servers (offline backend, relay not set up) the connection is direct only, as before.
         val relays = try {
-            withTimeoutOrNull(RELAY_TIMEOUT_MS) { WebLibraryRelay.parse(repository.iceServers()) }.orEmpty()
+            relays.get(uid)
         } catch (error: CancellationException) {
             connectionScope.cancel()
             throw error
-        } catch (error: Exception) {
-            logcat(LogPriority.WARN, error) { "Web library relay servers not loaded" }
-            emptyList()
         }
         android.util.Log.i(WebLibraryPeer.DIAG, "relay servers: ${relays.size}")
         val peer = try {

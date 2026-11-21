@@ -2,6 +2,7 @@ package mihon.feature.weblibrary
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -67,6 +68,39 @@ object WebLibraryRtc {
                     .setPassword(it.credential)
                     .createIceServer()
             }
+}
+
+/**
+ * Relay servers fetched at most once per [keepMs] per account (the credentials last 12 hours, so 4 leaves 8 for a
+ * session) and shared by every connection. No relay ([load] failed, the daily limit, not set up): empty, and asked
+ * again after [retryMs].
+ */
+class WebLibraryRelayCache(
+    private val keepMs: Long = 4 * 3_600_000L,
+    private val retryMs: Long = 5 * 60_000L,
+    private val now: () -> Long = System::currentTimeMillis,
+    private val load: suspend () -> List<WebLibraryRelay>,
+) {
+    private val lock = Mutex()
+    private var uid: String? = null
+    private var relays: List<WebLibraryRelay> = emptyList()
+    private var until = Long.MIN_VALUE
+
+    suspend fun get(uid: String): List<WebLibraryRelay> = lock.withLock {
+        if (uid == this.uid && now() < until) return@withLock relays
+        val loaded = try {
+            load()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logcat(LogPriority.WARN, error) { "Web library relay servers not loaded" }
+            emptyList()
+        }
+        this.uid = uid
+        relays = loaded
+        until = now() + if (loaded.isEmpty()) retryMs else keepMs
+        loaded
+    }
 }
 
 /**

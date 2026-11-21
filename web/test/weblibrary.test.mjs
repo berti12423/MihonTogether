@@ -460,3 +460,30 @@ test("a stale loss report (an old connection) is ignored, and an abort ends a wa
   controller.abort();
   await assert.rejects(waiting, (error) => error.code === "aborted");
 });
+
+// ---------- relay credentials are reused, not fetched per connection ----------
+test("relay servers are fetched once and reused for hours; a failure waits a few minutes before asking again", async () => {
+  let clock = 0, calls = 0;
+  const relay = [...p.DIRECT_ICE, { urls: ["turn:turn.cloudflare.com:3478?transport=udp"], username: "u", credential: "c" }];
+  let reply = async () => relay;
+  const get = p.relayCache(() => { calls++; return reply(); }, () => clock, 4 * 3600_000, 300_000);
+  assert.deepEqual(await Promise.all([get(), get()]), [relay, relay]);
+  assert.equal(calls, 1); // two connections at once share one call
+  clock += 3 * 3600_000;
+  await get();
+  assert.equal(calls, 1);
+  clock += 2 * 3600_000; // older than 4 hours: fresh credentials
+  await get();
+  assert.equal(calls, 2);
+  // Daily limit or offline: direct only, and no new call for 5 minutes (reconnects don't hammer the server).
+  clock += 5 * 3600_000;
+  reply = async () => { throw new Error("resource-exhausted"); };
+  assert.deepEqual(await get(), p.DIRECT_ICE);
+  clock += 60_000;
+  assert.deepEqual(await get(), p.DIRECT_ICE);
+  assert.equal(calls, 3);
+  clock += 300_000;
+  reply = async () => p.DIRECT_ICE; // relay not set up: same short wait
+  await get(); await get();
+  assert.equal(calls, 4);
+});
